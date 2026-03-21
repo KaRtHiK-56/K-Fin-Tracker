@@ -5,12 +5,16 @@ import { ThemeProvider, useTheme } from './lib/ThemeContext'
 import { supabase } from './lib/supabase'
 import './styles/globals.css'
 
-import Layout      from './components/layout/Layout'
-import LoginPage   from './pages/LoginPage'
-import Dashboard   from './pages/Dashboard'
+import Layout       from './components/layout/Layout'
+import LoginPage    from './pages/LoginPage'
+import Dashboard    from './pages/Dashboard'
 import StockTracker from './components/stocks/StockTracker'
 
-/* ── Piggy loader ─────────────────────────────────────────────────────────── */
+// ── Your allowed email ────────────────────────────────────────────────────────
+const ALLOWED_EMAIL = 'karthiksurya611@gmail.com'     // ← replace with your Gmail
+const NTFY_TOPIC    = 'kfin-karthik-9876'       // ← replace with your ntfy topic
+
+// ── Piggy loader ──────────────────────────────────────────────────────────────
 function Loader() {
   const [frame, setFrame] = useState(0)
   const msgs = ['Loading your wealth…', 'Fetching market data…', 'Computing health score…', 'Almost ready!']
@@ -39,24 +43,49 @@ function Loader() {
   )
 }
 
-/* ── Auth guard ───────────────────────────────────────────────────────────── */
+// ── Alert helper ──────────────────────────────────────────────────────────────
+function sendAlert(user: User) {
+  if (user.email !== ALLOWED_EMAIL) {
+    fetch(`https://ntfy.sh/${NTFY_TOPIC}`, {
+      method: 'POST',
+      headers: {
+        'Title': '⚠️ K-Fin Tracker — Unknown Login',
+        'Priority': 'urgent',
+        'Tags': 'warning,lock',
+      },
+      body: `Unknown login detected!\nEmail: ${user.email}\nTime: ${new Date().toLocaleString('en-IN')}\nUser ID: ${user.id}`,
+    }).catch(() => {})  // silently ignore if ntfy is unreachable
+  }
+}
+
+// ── Auth guard ────────────────────────────────────────────────────────────────
 function Protected({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null | undefined>(undefined)
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUser(data.user))
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
-      setUser(session?.user ?? null)
+    // Check existing session
+    supabase.auth.getUser().then(({ data }) => {
+      setUser(data.user)
+      if (data.user) sendAlert(data.user)
     })
+
+    // Listen for auth state changes (new logins)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user ?? null)
+      if (event === 'SIGNED_IN' && session?.user) {
+        sendAlert(session.user)
+      }
+    })
+
     return () => subscription.unsubscribe()
   }, [])
 
   if (user === undefined) return <Loader />
-  if (user === null) return <Navigate to="/login" replace />
+  if (user === null)      return <Navigate to="/login" replace />
   return <>{children}</>
 }
 
-/* ── Inner app (accesses theme context) ───────────────────────────────────── */
+// ── Inner app ─────────────────────────────────────────────────────────────────
 function AppInner() {
   const { theme, toggle } = useTheme()
   return (
@@ -90,6 +119,7 @@ function AppInner() {
   )
 }
 
+// ── Root ──────────────────────────────────────────────────────────────────────
 export default function App() {
   return (
     <ThemeProvider>
