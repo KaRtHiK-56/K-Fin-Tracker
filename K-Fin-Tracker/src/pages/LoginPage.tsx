@@ -43,7 +43,7 @@ export default function LoginPage() {
         border: '1px solid var(--border)', background: 'transparent',
         color: 'var(--text-secondary)', cursor: 'pointer',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 16, transition: var(--trans),
+        fontSize: 16, transition: 'all .15s ease',
       }}>
         {isDark ? '☀️' : '🌙'}
       </button>
