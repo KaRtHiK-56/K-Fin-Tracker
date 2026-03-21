@@ -1,0 +1,89 @@
+.page { padding: 24px; display: flex; flex-direction: column; gap: 18px; }
+
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.title  { font-size: 21px; font-weight: 700; letter-spacing: -.4px; color: var(--text-primary); }
+.sub    { font-size: 12px; color: var(--text-tertiary); margin-top: 3px; }
+.updated { color: var(--brand); }
+.hActions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+.iconBtn {
+  width: 36px; height: 36px; border-radius: var(--r-md);
+  border: 1px solid var(--border); background: transparent;
+  color: var(--text-secondary); cursor: pointer; font-size: 16px;
+  display: flex; align-items: center; justify-content: center;
+  transition: var(--trans);
+}
+.iconBtn:hover { border-color: var(--border-hover); color: var(--brand); }
+.spin { animation: spin .7s linear infinite; }
+
+.addBtn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 9px 18px; border-radius: var(--r-md);
+  border: none; background: var(--brand); color: #fff;
+  font-size: 13px; font-weight: 600; font-family: var(--font);
+  cursor: pointer; transition: var(--trans);
+  box-shadow: 0 0 16px var(--brand-glow);
+}
+.addBtn:hover { filter: brightness(1.1); }
+
+.strip {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+}
+
+.sCard {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--r-xl); padding: 15px 17px;
+  transition: var(--trans);
+}
+.sCard:hover { border-color: var(--border-hover); }
+.healthCard  { background: var(--brand-pale); border-color: var(--border-hover); }
+
+.sLabel { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--text-tertiary); margin-bottom: 7px; }
+.sVal   { font-size: 18px; font-weight: 700; font-family: var(--mono); letter-spacing: -.3px; }
+.healthRow { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+
+.body { display: flex; gap: 14px; align-items: flex-start; }
+
+.tableCard {
+  flex: 1; min-width: 0;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--r-xl); overflow: hidden;
+}
+
+.tableTop {
+  display: flex; align-items: center; gap: 10px;
+  padding: 13px 16px; border-bottom: 1px solid var(--border);
+}
+
+.searchWrap {
+  flex: 1; display: flex; align-items: center; gap: 8px;
+  background: var(--inp-bg); border: 1px solid var(--inp-border);
+  border-radius: var(--r-md); padding: 0 12px; height: 34px;
+  transition: var(--trans);
+}
+.searchWrap:focus-within { border-color: var(--brand); }
+.searchIco   { color: var(--text-tertiary); font-size: 13px; }
+.searchInput { flex: 1; border: none; outline: none; background: transparent; font-size: 13px; font-family: var(--font); color: var(--text-primary); }
+.searchInput::placeholder { color: var(--text-muted); }
+.hCount { font-size: 12px; color: var(--text-tertiary); flex-shrink: 0; }
+
+.detail {
+  width: 268px; flex-shrink: 0;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--r-xl); padding: 16px;
+  display: flex; flex-direction: column; gap: 12px;
+  max-height: 80vh; overflow-y: auto;
+  position: sticky; top: 20px;
+}
+
+@media (max-width: 1100px) {
+  .strip { grid-template-columns: repeat(3, 1fr); }
+  .detail { display: none; }
+}
+@media (max-width: 700px) {
+  .page  { padding: 14px; }
+  .strip { grid-template-columns: repeat(2, 1fr); }
+  .healthCard { grid-column: span 2; }
+}
