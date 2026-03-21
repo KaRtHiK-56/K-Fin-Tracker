@@ -4,15 +4,17 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string
 
 export const supabase = createClient(
-  supabaseUrl || 'https://placeholder.supabase.co',
-  supabaseAnonKey || 'placeholder',
+  supabaseUrl,
+  supabaseAnonKey,
   { auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: true } }
 )
 
 export async function signInWithGoogle() {
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
-    options: { redirectTo: `${window.location.origin}/dashboard` },
+    options: {
+      redirectTo: 'https://k-fin-tracker.vercel.app/dashboard',
+    },
   })
   if (error) throw error
 }
