@@ -271,7 +271,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ## 👨‍💻 Author
 
-**Karthik K** — [@KaRtHiK-56](https://github.com/KaRtHiK-56)
+**Karthik** — [@KaRtHiK-56](https://github.com/KaRtHiK-56)
 
 Built with ❤️ for the Indian investor community.
 
