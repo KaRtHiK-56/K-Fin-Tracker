@@ -13,7 +13,7 @@ export async function signInWithGoogle() {
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: 'https://k-fin-tracker.vercel.app/dashboard',
+      redirectTo: 'https://k-fin-tracker01.vercel.app/dashboard',
     },
   })
   if (error) throw error
