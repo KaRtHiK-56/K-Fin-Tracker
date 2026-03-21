@@ -1,0 +1,4 @@
+User-agent: *
+Disallow: /
+
+# Blocks Google, Bing, all crawlers from indexing
