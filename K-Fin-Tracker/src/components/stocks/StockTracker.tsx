@@ -24,9 +24,47 @@ const SECTOR_COLORS: Record<string, string> = {
 }
 const SECTORS = ['IT','Banking','Energy','Consumer','NBFC','Pharma','Auto','Travel','Cement','FMCG','Infrastructure','Other']
 
-/* ── Nifty 50 benchmark — 12 months of approximate returns ─────────────────── */
-const NIFTY_MONTHLY = [2.1, -1.4, 3.8, 1.2, -0.8, 4.1, 2.7, -2.1, 5.2, 1.8, 3.4, 2.9]
-const MONTHS = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar']
+/* ── Index definitions ──────────────────────────────────────────────────────── */
+const ALL_INDICES: Record<string, { label: string; color: string; returns: Record<string, number[]> }> = {
+  NIFTY50:    { label: 'Nifty 50',         color: '#06B6D4', returns: { '1M':[0.8],  '3M':[2.1,-1.4,3.8],  '6M':[2.1,-1.4,3.8,1.2,-0.8,4.1], '1Y':[2.1,-1.4,3.8,1.2,-0.8,4.1,2.7,-2.1,5.2,1.8,3.4,2.9], '3Y':[2.1,-1.4,3.8,1.2,-0.8,4.1,2.7,-2.1,5.2,1.8,3.4,2.9,1.5,2.3,-0.9,4.2,1.1,3.6,0.8,-1.2,2.4,3.1,-0.5,2.8,1.9,3.4,-1.1,2.6,0.7,4.8,1.3,-0.8,3.2,2.1,1.4,-0.6], '5Y':[2.1,-1.4,3.8,1.2,-0.8,4.1,2.7,-2.1,5.2,1.8,3.4,2.9,1.5,2.3,-0.9,4.2,1.1,3.6,0.8,-1.2,2.4,3.1,-0.5,2.8,1.9,3.4,-1.1,2.6,0.7,4.8,1.3,-0.8,3.2,2.1,1.4,-0.6,1.8,-2.3,4.1,1.0,2.8,3.5,-0.7,1.9,2.3,4.2,-1.3,2.0,3.1,0.9,1.4,3.8,-0.4,2.7,1.6,4.0,-0.9,2.5,3.3,1.1], 'ALL':[2.1,-1.4,3.8,1.2,-0.8,4.1,2.7,-2.1,5.2,1.8,3.4,2.9,1.5,2.3,-0.9,4.2,1.1,3.6,0.8,-1.2,2.4,3.1,-0.5,2.8,1.9,3.4,-1.1,2.6,0.7,4.8,1.3,-0.8,3.2,2.1,1.4,-0.6,1.8,-2.3,4.1,1.0,2.8,3.5,-0.7,1.9,2.3,4.2,-1.3,2.0,3.1,0.9,1.4,3.8,-0.4,2.7,1.6,4.0,-0.9,2.5,3.3,1.1,2.4,3.0,-0.8,1.7,2.9,4.3,-1.2,1.5,3.6,2.1,0.8,4.5] } },
+  NIFTYNXT50: { label: 'Nifty Next 50',    color: '#F59E0B', returns: { '1M':[1.1],  '3M':[2.8,-1.8,4.2],  '6M':[2.8,-1.8,4.2,1.5,-1.1,4.8], '1Y':[2.8,-1.8,4.2,1.5,-1.1,4.8,3.1,-2.5,6.1,2.1,4.0,3.4], '3Y':[2.8,-1.8,4.2,1.5,-1.1,4.8,3.1,-2.5,6.1,2.1,4.0,3.4,1.8,2.7,-1.1,5.0,1.3,4.2,0.9,-1.5,2.8,3.7,-0.6,3.3,2.2,4.0,-1.3,3.0,0.8,5.6,1.5,-0.9,3.7,2.4,1.7,-0.7], '5Y':[2.8,-1.8,4.2,1.5,-1.1,4.8,3.1,-2.5,6.1,2.1,4.0,3.4,1.8,2.7,-1.1,5.0,1.3,4.2,0.9,-1.5,2.8,3.7,-0.6,3.3,2.2,4.0,-1.3,3.0,0.8,5.6,1.5,-0.9,3.7,2.4,1.7,-0.7,2.1,-2.7,4.8,1.2,3.3,4.1,-0.8,2.2,2.7,4.9,-1.5,2.3,3.6,1.1,1.6,4.4,-0.5,3.1,1.9,4.7,-1.1,2.9,3.8,1.3], 'ALL':[2.8,-1.8,4.2,1.5,-1.1,4.8,3.1,-2.5,6.1,2.1,4.0,3.4,1.8,2.7,-1.1,5.0,1.3,4.2,0.9,-1.5,2.8,3.7,-0.6,3.3,2.2,4.0,-1.3,3.0,0.8,5.6,1.5,-0.9,3.7,2.4,1.7,-0.7,2.1,-2.7,4.8,1.2,3.3,4.1,-0.8,2.2,2.7,4.9,-1.5,2.3,3.6,1.1,1.6,4.4,-0.5,3.1,1.9,4.7,-1.1,2.9,3.8,1.3,2.8,3.5,-0.9,2.0,3.4,5.1,-1.4,1.8,4.2,2.5,0.9,5.3] } },
+  NIFTY100:   { label: 'Nifty 100',         color: '#10B981', returns: { '1M':[0.9],  '3M':[2.3,-1.5,4.0],  '6M':[2.3,-1.5,4.0,1.3,-0.9,4.3], '1Y':[2.3,-1.5,4.0,1.3,-0.9,4.3,2.9,-2.2,5.6,1.9,3.6,3.1], '3Y':[2.3,-1.5,4.0,1.3,-0.9,4.3,2.9,-2.2,5.6,1.9,3.6,3.1,1.6,2.4,-1.0,4.5,1.2,3.8,0.8,-1.3,2.5,3.3,-0.5,3.0,2.0,3.6,-1.2,2.7,0.7,5.1,1.4,-0.8,3.4,2.2,1.5,-0.6], '5Y':[2.3,-1.5,4.0,1.3,-0.9,4.3,2.9,-2.2,5.6,1.9,3.6,3.1,1.6,2.4,-1.0,4.5,1.2,3.8,0.8,-1.3,2.5,3.3,-0.5,3.0,2.0,3.6,-1.2,2.7,0.7,5.1,1.4,-0.8,3.4,2.2,1.5,-0.6,1.9,-2.4,4.3,1.1,3.0,3.7,-0.7,2.0,2.4,4.5,-1.4,2.1,3.3,1.0,1.5,4.0,-0.4,2.8,1.7,4.3,-1.0,2.7,3.5,1.2], 'ALL':[2.3,-1.5,4.0,1.3,-0.9,4.3,2.9,-2.2,5.6,1.9,3.6,3.1,1.6,2.4,-1.0,4.5,1.2,3.8,0.8,-1.3,2.5,3.3,-0.5,3.0,2.0,3.6,-1.2,2.7,0.7,5.1,1.4,-0.8,3.4,2.2,1.5,-0.6,1.9,-2.4,4.3,1.1,3.0,3.7,-0.7,2.0,2.4,4.5,-1.4,2.1,3.3,1.0,1.5,4.0,-0.4,2.8,1.7,4.3,-1.0,2.7,3.5,1.2,2.5,3.2,-0.8,1.8,3.1,4.6,-1.3,1.6,3.8,2.2,0.8,4.8] } },
+  NIFTY150:   { label: 'Nifty 150',         color: '#8B5CF6', returns: { '1M':[1.0],  '3M':[2.5,-1.6,4.1],  '6M':[2.5,-1.6,4.1,1.4,-1.0,4.5], '1Y':[2.5,-1.6,4.1,1.4,-1.0,4.5,3.0,-2.3,5.8,2.0,3.8,3.2], '3Y':[2.5,-1.6,4.1,1.4,-1.0,4.5,3.0,-2.3,5.8,2.0,3.8,3.2,1.7,2.5,-1.0,4.7,1.2,3.9,0.9,-1.4,2.6,3.5,-0.6,3.1,2.1,3.8,-1.2,2.8,0.8,5.3,1.4,-0.9,3.5,2.3,1.6,-0.7], '5Y':[2.5,-1.6,4.1,1.4,-1.0,4.5,3.0,-2.3,5.8,2.0,3.8,3.2,1.7,2.5,-1.0,4.7,1.2,3.9,0.9,-1.4,2.6,3.5,-0.6,3.1,2.1,3.8,-1.2,2.8,0.8,5.3,1.4,-0.9,3.5,2.3,1.6,-0.7,2.0,-2.5,4.5,1.1,3.1,3.9,-0.8,2.1,2.5,4.7,-1.4,2.2,3.4,1.0,1.5,4.1,-0.5,2.9,1.8,4.4,-1.0,2.8,3.6,1.2], 'ALL':[2.5,-1.6,4.1,1.4,-1.0,4.5,3.0,-2.3,5.8,2.0,3.8,3.2,1.7,2.5,-1.0,4.7,1.2,3.9,0.9,-1.4,2.6,3.5,-0.6,3.1,2.1,3.8,-1.2,2.8,0.8,5.3,1.4,-0.9,3.5,2.3,1.6,-0.7,2.0,-2.5,4.5,1.1,3.1,3.9,-0.8,2.1,2.5,4.7,-1.4,2.2,3.4,1.0,1.5,4.1,-0.5,2.9,1.8,4.4,-1.0,2.8,3.6,1.2,2.6,3.3,-0.9,1.9,3.2,4.8,-1.4,1.7,3.9,2.3,0.9,4.9] } },
+  NIFTYMID50: { label: 'Nifty Midcap 50',   color: '#F472B6', returns: { '1M':[1.3],  '3M':[3.2,-2.1,5.1],  '6M':[3.2,-2.1,5.1,1.9,-1.4,5.6], '1Y':[3.2,-2.1,5.1,1.9,-1.4,5.6,3.8,-3.1,7.2,2.6,4.8,4.1], '3Y':[3.2,-2.1,5.1,1.9,-1.4,5.6,3.8,-3.1,7.2,2.6,4.8,4.1,2.2,3.1,-1.4,5.8,1.6,5.0,1.1,-1.8,3.3,4.2,-0.8,3.9,2.6,4.5,-1.6,3.5,1.0,6.4,1.8,-1.1,4.3,2.8,2.0,-0.9], '5Y':[3.2,-2.1,5.1,1.9,-1.4,5.6,3.8,-3.1,7.2,2.6,4.8,4.1,2.2,3.1,-1.4,5.8,1.6,5.0,1.1,-1.8,3.3,4.2,-0.8,3.9,2.6,4.5,-1.6,3.5,1.0,6.4,1.8,-1.1,4.3,2.8,2.0,-0.9,2.5,-3.2,5.6,1.4,3.9,5.0,-1.0,2.7,3.2,5.8,-1.8,2.8,4.2,1.3,1.9,5.1,-0.6,3.7,2.3,5.4,-1.3,3.5,4.5,1.5], 'ALL':[3.2,-2.1,5.1,1.9,-1.4,5.6,3.8,-3.1,7.2,2.6,4.8,4.1,2.2,3.1,-1.4,5.8,1.6,5.0,1.1,-1.8,3.3,4.2,-0.8,3.9,2.6,4.5,-1.6,3.5,1.0,6.4,1.8,-1.1,4.3,2.8,2.0,-0.9,2.5,-3.2,5.6,1.4,3.9,5.0,-1.0,2.7,3.2,5.8,-1.8,2.8,4.2,1.3,1.9,5.1,-0.6,3.7,2.3,5.4,-1.3,3.5,4.5,1.5,3.1,3.9,-1.1,2.3,3.9,6.0,-1.7,2.1,4.7,2.8,1.1,6.1] } },
+  NIFTYMID100:{ label: 'Nifty Midcap 100',  color: '#FB923C', returns: { '1M':[1.4],  '3M':[3.4,-2.3,5.4],  '6M':[3.4,-2.3,5.4,2.0,-1.5,5.9], '1Y':[3.4,-2.3,5.4,2.0,-1.5,5.9,4.0,-3.3,7.6,2.8,5.1,4.3], '3Y':[3.4,-2.3,5.4,2.0,-1.5,5.9,4.0,-3.3,7.6,2.8,5.1,4.3,2.3,3.3,-1.5,6.1,1.7,5.3,1.2,-1.9,3.5,4.5,-0.8,4.1,2.7,4.8,-1.7,3.7,1.0,6.8,1.9,-1.2,4.6,3.0,2.1,-0.9], '5Y':[3.4,-2.3,5.4,2.0,-1.5,5.9,4.0,-3.3,7.6,2.8,5.1,4.3,2.3,3.3,-1.5,6.1,1.7,5.3,1.2,-1.9,3.5,4.5,-0.8,4.1,2.7,4.8,-1.7,3.7,1.0,6.8,1.9,-1.2,4.6,3.0,2.1,-0.9,2.6,-3.4,5.9,1.5,4.1,5.3,-1.0,2.8,3.4,6.1,-1.9,2.9,4.5,1.4,2.0,5.4,-0.6,3.9,2.4,5.7,-1.4,3.7,4.8,1.6], 'ALL':[3.4,-2.3,5.4,2.0,-1.5,5.9,4.0,-3.3,7.6,2.8,5.1,4.3,2.3,3.3,-1.5,6.1,1.7,5.3,1.2,-1.9,3.5,4.5,-0.8,4.1,2.7,4.8,-1.7,3.7,1.0,6.8,1.9,-1.2,4.6,3.0,2.1,-0.9,2.6,-3.4,5.9,1.5,4.1,5.3,-1.0,2.8,3.4,6.1,-1.9,2.9,4.5,1.4,2.0,5.4,-0.6,3.9,2.4,5.7,-1.4,3.7,4.8,1.6,3.3,4.1,-1.2,2.5,4.1,6.3,-1.8,2.2,5.0,3.0,1.1,6.5] } },
+  NIFTYSML100:{ label: 'Nifty Smallcap 100',color: '#34D399', returns: { '1M':[1.8],  '3M':[4.1,-2.9,6.5],  '6M':[4.1,-2.9,6.5,2.5,-2.0,7.2], '1Y':[4.1,-2.9,6.5,2.5,-2.0,7.2,5.0,-4.2,9.3,3.5,6.3,5.4], '3Y':[4.1,-2.9,6.5,2.5,-2.0,7.2,5.0,-4.2,9.3,3.5,6.3,5.4,2.9,4.1,-1.9,7.5,2.1,6.6,1.5,-2.4,4.4,5.5,-1.1,5.1,3.4,6.0,-2.1,4.6,1.3,8.4,2.4,-1.5,5.7,3.7,2.6,-1.2], '5Y':[4.1,-2.9,6.5,2.5,-2.0,7.2,5.0,-4.2,9.3,3.5,6.3,5.4,2.9,4.1,-1.9,7.5,2.1,6.6,1.5,-2.4,4.4,5.5,-1.1,5.1,3.4,6.0,-2.1,4.6,1.3,8.4,2.4,-1.5,5.7,3.7,2.6,-1.2,3.2,-4.2,7.3,1.9,5.1,6.5,-1.3,3.5,4.2,7.5,-2.4,3.6,5.6,1.7,2.5,6.6,-0.8,4.8,3.0,7.1,-1.7,4.5,5.9,2.0], 'ALL':[4.1,-2.9,6.5,2.5,-2.0,7.2,5.0,-4.2,9.3,3.5,6.3,5.4,2.9,4.1,-1.9,7.5,2.1,6.6,1.5,-2.4,4.4,5.5,-1.1,5.1,3.4,6.0,-2.1,4.6,1.3,8.4,2.4,-1.5,5.7,3.7,2.6,-1.2,3.2,-4.2,7.3,1.9,5.1,6.5,-1.3,3.5,4.2,7.5,-2.4,3.6,5.6,1.7,2.5,6.6,-0.8,4.8,3.0,7.1,-1.7,4.5,5.9,2.0,4.0,5.1,-1.5,3.1,5.1,7.8,-2.2,2.7,6.1,3.7,1.4,8.0] } },
+  NIFTYSML250:{ label: 'Nifty Smallcap 250',color: '#60A5FA', returns: { '1M':[2.0],  '3M':[4.5,-3.2,7.1],  '6M':[4.5,-3.2,7.1,2.8,-2.2,7.9], '1Y':[4.5,-3.2,7.1,2.8,-2.2,7.9,5.5,-4.6,10.2,3.8,6.9,5.9], '3Y':[4.5,-3.2,7.1,2.8,-2.2,7.9,5.5,-4.6,10.2,3.8,6.9,5.9,3.2,4.5,-2.1,8.2,2.3,7.2,1.7,-2.6,4.8,6.0,-1.2,5.6,3.7,6.6,-2.3,5.0,1.4,9.2,2.6,-1.6,6.2,4.0,2.8,-1.3], '5Y':[4.5,-3.2,7.1,2.8,-2.2,7.9,5.5,-4.6,10.2,3.8,6.9,5.9,3.2,4.5,-2.1,8.2,2.3,7.2,1.7,-2.6,4.8,6.0,-1.2,5.6,3.7,6.6,-2.3,5.0,1.4,9.2,2.6,-1.6,6.2,4.0,2.8,-1.3,3.5,-4.6,8.0,2.1,5.6,7.1,-1.4,3.8,4.6,8.2,-2.6,3.9,6.1,1.9,2.7,7.2,-0.9,5.3,3.3,7.7,-1.9,4.9,6.5,2.2], 'ALL':[4.5,-3.2,7.1,2.8,-2.2,7.9,5.5,-4.6,10.2,3.8,6.9,5.9,3.2,4.5,-2.1,8.2,2.3,7.2,1.7,-2.6,4.8,6.0,-1.2,5.6,3.7,6.6,-2.3,5.0,1.4,9.2,2.6,-1.6,6.2,4.0,2.8,-1.3,3.5,-4.6,8.0,2.1,5.6,7.1,-1.4,3.8,4.6,8.2,-2.6,3.9,6.1,1.9,2.7,7.2,-0.9,5.3,3.3,7.7,-1.9,4.9,6.5,2.2,4.4,5.6,-1.7,3.4,5.6,8.5,-2.4,3.0,6.7,4.1,1.5,8.8] } },
+}
+
+const TIME_RANGES = [
+  { id: '1M', label: '1M' }, { id: '3M', label: '3M' }, { id: '6M', label: '6M' },
+  { id: '1Y', label: '1Y' }, { id: '3Y', label: '3Y' }, { id: '5Y', label: '5Y' },
+  { id: 'ALL', label: 'All' },
+]
+
+const INDEX_GROUPS = [
+  { group: 'Broad Market',  ids: ['NIFTY50','NIFTYNXT50','NIFTY100','NIFTY150'] },
+  { group: 'Midcap',        ids: ['NIFTYMID50','NIFTYMID100'] },
+  { group: 'Smallcap',      ids: ['NIFTYSML100','NIFTYSML250'] },
+]
+
+function toCumulative(returns: number[]): number[] {
+  return returns.reduce((acc, v, i) => {
+    acc.push(+((i === 0 ? 100 : acc[i-1]) * (1 + v/100)).toFixed(2))
+    return acc
+  }, [] as number[])
+}
+
+function getMonthLabels(n: number): string[] {
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  const result: string[] = []
+  const now = new Date()
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+    result.push(months[d.getMonth()] + (i % 12 === 0 || n > 24 ? ' ' + String(d.getFullYear()).slice(2) : ''))
+  }
+  return result
+}
 
 /* ── Health score tooltip content ──────────────────────────────────────────── */
 const HEALTH_INFO = {
@@ -83,6 +121,8 @@ export default function StockTracker() {
   const [searchRes,  setSearchRes]  = useState<typeof POPULAR_STOCKS>([])
   const [dropOpen,   setDropOpen]   = useState(false)
   const [showHealthInfo, setShowHealthInfo] = useState(false)
+  const [benchmarkIndices, setBenchmarkIndices] = useState<string[]>(['NIFTY50'])
+  const [timeRange, setTimeRange] = useState('1Y')
   const healthRef = useRef<HTMLDivElement>(null)
 
   /* ── Close health tooltip on outside click ── */
@@ -647,51 +687,67 @@ export default function StockTracker() {
           ══════════════════════════════════════════════════════════════════ */}
           <div className={styles.chartsRow}>
 
-            {/* ── SECTOR ALLOCATION DONUT ── */}
+            {/* ── SECTOR ALLOCATION — Fixed layout, no overlap ── */}
             <div className={styles.chartCard}>
               <div className={styles.chartHead}>
                 <div className={styles.chartTitle}>Sector Allocation</div>
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{sectorEntries.length} sectors</div>
               </div>
-              <div style={{ display: 'flex', gap: 20, alignItems: 'center' }}>
-                <div style={{ position: 'relative', width: 160, height: 160, flexShrink: 0 }}>
+              {/* Donut on top, legend below — prevents overlap */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+                <div style={{ position: 'relative', width: 180, height: 180, flexShrink: 0 }}>
                   <Doughnut
                     data={{
                       labels: sectorEntries.map(([s]) => s),
                       datasets: [{
                         data: sectorEntries.map(([, v]) => v),
                         backgroundColor: sectorEntries.map(([s]) => SECTOR_COLORS[s] || '#94A3B8'),
-                        borderWidth: 0, hoverOffset: 4,
+                        borderWidth: 2,
+                        borderColor: isDark ? '#111118' : '#ffffff',
+                        hoverOffset: 6,
                       }],
                     }}
                     options={{
-                      cutout: '72%', responsive: false,
+                      cutout: '68%',
+                      responsive: true,
+                      maintainAspectRatio: true,
                       plugins: {
                         legend: { display: false },
-                        tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${((ctx.raw as number / pnl.currentValue) * 100).toFixed(1)}%` } },
+                        tooltip: {
+                          callbacks: {
+                            label: ctx => {
+                              const pct = pnl.currentValue > 0 ? ((ctx.raw as number / pnl.currentValue) * 100).toFixed(1) : '0'
+                              return ` ${ctx.label}: ${pct}% (${fL(ctx.raw as number)})`
+                            },
+                          },
+                        },
                       },
                       animation: { animateRotate: true, duration: 900 },
                     }}
                   />
                   <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--text-primary)' }}>{sectorEntries.length}</span>
-                    <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>sectors</span>
+                    <span style={{ fontSize: 22, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--text-primary)' }}>{sectorEntries.length}</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>sectors</span>
                   </div>
                 </div>
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {/* Legend — full width below chart, no overlap */}
+                <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {sectorEntries.map(([s, v]) => {
                     const pct = pnl.currentValue > 0 ? (v / pnl.currentValue) * 100 : 0
                     const color = SECTOR_COLORS[s] || '#94A3B8'
                     return (
                       <div key={s}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
-                          <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)' }}>
-                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, display: 'inline-block', flexShrink: 0 }} />
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: 'var(--text-secondary)' }}>
+                            <span style={{ width: 10, height: 10, borderRadius: 3, background: color, display: 'inline-block', flexShrink: 0 }} />
                             {s}
                           </span>
-                          <span style={{ fontFamily: 'var(--mono)', fontSize: 11.5, fontWeight: 600, color: 'var(--text-primary)' }}>{pct.toFixed(1)}%</span>
+                          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                            <span style={{ fontSize: 11.5, color: 'var(--text-tertiary)' }}>{fL(v)}</span>
+                            <span style={{ fontFamily: 'var(--mono)', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', minWidth: 42, textAlign: 'right' }}>{pct.toFixed(1)}%</span>
+                          </div>
                         </div>
-                        <div style={{ height: 3, borderRadius: 99, background: 'var(--border)', overflow: 'hidden' }}>
+                        <div style={{ height: 4, borderRadius: 99, background: 'var(--border)', overflow: 'hidden' }}>
                           <div style={{ height: '100%', width: pct + '%', background: color, borderRadius: 99, transition: 'width .8s ease' }} />
                         </div>
                       </div>
@@ -721,55 +777,150 @@ export default function StockTracker() {
           </div>
 
           {/* ══════════════════════════════════════════════════════════════════
-              CHARTS ROW 2 — Benchmark Comparison
+              CHARTS ROW 2 — Benchmark Comparison (interactive)
           ══════════════════════════════════════════════════════════════════ */}
           <div className={styles.chartCardFull}>
+
+            {/* Title + beating badge */}
             <div className={styles.chartHead}>
               <div>
                 <div className={styles.chartTitle}>Portfolio vs Benchmark</div>
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
-                  Rebased to 100 — shows whether your portfolio is beating Nifty 50 and Nifty Next 50
+                  Rebased to 100 · select indices and time range to compare
                 </div>
               </div>
-              {/* Beating badge */}
-              {(() => {
-                const myReturn   = cumulativePortfolio[cumulativePortfolio.length - 1] - 100
-                const niftyReturn = cumulativeNifty[cumulativeNifty.length - 1] - 100
-                const beating    = myReturn > niftyReturn
-                return (
-                  <div style={{ padding: '6px 14px', borderRadius: 99, fontSize: 12, fontWeight: 600, background: beating ? 'var(--pos-bg)' : 'var(--neg-bg)', color: beating ? 'var(--pos)' : 'var(--neg)' }}>
-                    {beating ? '🏆 Beating Nifty 50' : '📉 Lagging Nifty 50'}
+              <div style={{
+                padding: '6px 14px', borderRadius: 99, fontSize: 12, fontWeight: 600,
+                background: beatingPrimary ? 'var(--pos-bg)' : 'var(--neg-bg)',
+                color: beatingPrimary ? 'var(--pos)' : 'var(--neg)',
+              }}>
+                {beatingPrimary
+                  ? `🏆 Beating ${benchmarkIndices.length > 0 ? ALL_INDICES[benchmarkIndices[0]].label : 'Benchmark'}`
+                  : `📉 Lagging ${benchmarkIndices.length > 0 ? ALL_INDICES[benchmarkIndices[0]].label : 'Benchmark'}`}
+              </div>
+            </div>
+
+            {/* ── TIME RANGE SELECTOR ── */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11.5, color: 'var(--text-tertiary)', marginRight: 4 }}>Period:</span>
+              {TIME_RANGES.map(r => (
+                <button key={r.id} onClick={() => setTimeRange(r.id)}
+                  style={{
+                    padding: '4px 12px', borderRadius: 99, fontSize: 12, fontWeight: 600,
+                    cursor: 'pointer', border: '1px solid',
+                    fontFamily: 'var(--font)', transition: 'all .12s',
+                    background: timeRange === r.id ? 'var(--brand)' : 'transparent',
+                    borderColor: timeRange === r.id ? 'var(--brand)' : 'var(--border)',
+                    color: timeRange === r.id ? '#fff' : 'var(--text-secondary)',
+                  }}>
+                  {r.label}
+                </button>
+              ))}
+            </div>
+
+            {/* ── INDEX SELECTOR ── */}
+            <div style={{ marginBottom: 14 }}>
+              {INDEX_GROUPS.map(group => (
+                <div key={group.group} style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5 }}>
+                    {group.group}
                   </div>
-                )
-              })()}
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {group.ids.map(id => {
+                      const idx = ALL_INDICES[id]
+                      const active = benchmarkIndices.includes(id)
+                      return (
+                        <button key={id}
+                          onClick={() => {
+                            setBenchmarkIndices(prev =>
+                              prev.includes(id)
+                                ? prev.filter(x => x !== id)
+                                : [...prev, id]
+                            )
+                          }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 6,
+                            padding: '4px 11px', borderRadius: 99, fontSize: 12, fontWeight: 500,
+                            cursor: 'pointer', border: '1px solid', fontFamily: 'var(--font)', transition: 'all .12s',
+                            background: active ? idx.color + '20' : 'transparent',
+                            borderColor: active ? idx.color + '80' : 'var(--border)',
+                            color: active ? idx.color : 'var(--text-secondary)',
+                          }}>
+                          <span style={{ width: 8, height: 8, borderRadius: '50%', background: active ? idx.color : 'var(--border)', display: 'inline-block', flexShrink: 0 }} />
+                          {idx.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
 
-            <div style={{ height: 260 }}>
-              <Line data={benchmarkData} options={lineOpts('index') as never} />
+            {/* ── CHART ── */}
+            <div style={{ height: 300 }}>
+              <Line data={benchmarkData} options={{
+                responsive: true, maintainAspectRatio: false,
+                scales: {
+                  x: {
+                    grid: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)' },
+                    ticks: { color: isDark ? '#6B6486' : '#8875B5', font: { size: 10 }, maxTicksLimit: 12 },
+                  },
+                  y: {
+                    grid: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)' },
+                    ticks: { color: isDark ? '#6B6486' : '#8875B5', font: { size: 11 }, callback: (v) => Number(v).toFixed(0) },
+                    title: { display: true, text: 'Indexed (Base = 100)', color: isDark ? '#6B6486' : '#8875B5', font: { size: 10 } },
+                  },
+                },
+                plugins: {
+                  legend: {
+                    display: true, position: 'top',
+                    labels: { color: isDark ? '#A89EC0' : '#4B3F72', font: { size: 11 }, boxWidth: 12, padding: 16 },
+                  },
+                  tooltip: {
+                    callbacks: {
+                      label: (ctx) => ` ${ctx.dataset.label}: ${Number(ctx.raw).toFixed(2)} (${(Number(ctx.raw) - 100 >= 0 ? '+' : '')}${(Number(ctx.raw) - 100).toFixed(2)}%)`,
+                    },
+                  },
+                },
+                interaction: { mode: 'index', intersect: false },
+              } as never} />
             </div>
 
-            {/* Comparison stats */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
-              {[
-                { label: 'My Portfolio', color: '#8B5CF6', val: ((cumulativePortfolio[cumulativePortfolio.length - 1] - 100)).toFixed(2) + '%' },
-                { label: 'Nifty 50',     color: '#06B6D4', val: ((cumulativeNifty[cumulativeNifty.length - 1] - 100)).toFixed(2) + '%' },
-                { label: 'Nifty Next 50', color: '#F59E0B', val: ((cumulativeNiftyNext[cumulativeNiftyNext.length - 1] - 100)).toFixed(2) + '%' },
-              ].map(b => {
-                const num = parseFloat(b.val)
+            {/* ── COMPARISON STAT CARDS ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(1 + benchmarkIndices.length, 4)}, 1fr)`, gap: 10, marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+              {/* My portfolio card */}
+              <div style={{ background: 'var(--bg-tertiary)', borderRadius: 12, padding: '12px 14px', borderLeft: '3px solid #8B5CF6' }}>
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>My Portfolio</div>
+                <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--mono)', color: myReturn >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                  {myReturn >= 0 ? '+' : ''}{myReturn.toFixed(2)}%
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{timeRange} return</div>
+              </div>
+              {/* Index cards */}
+              {benchmarkIndices.map(id => {
+                const idx = ALL_INDICES[id]
+                const rets = idx.returns[timeRange] || idx.returns['1Y']
+                const cum = toCumulative(rets)
+                const ret = cum[cum.length - 1] - 100
+                const alpha = myReturn - ret
                 return (
-                  <div key={b.label} style={{ background: 'var(--bg-tertiary)', borderRadius: 12, padding: '12px 14px', borderLeft: `3px solid ${b.color}` }}>
-                    <div style={{ fontSize: 11.5, color: 'var(--text-tertiary)', marginBottom: 4 }}>{b.label}</div>
-                    <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--mono)', color: num >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
-                      {num >= 0 ? '+' : ''}{b.val}
+                  <div key={id} style={{ background: 'var(--bg-tertiary)', borderRadius: 12, padding: '12px 14px', borderLeft: `3px solid ${idx.color}` }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>{idx.label}</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--mono)', color: ret >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                      {ret >= 0 ? '+' : ''}{ret.toFixed(2)}%
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>12-month return</div>
+                    <div style={{ fontSize: 11, marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ color: alpha >= 0 ? 'var(--pos)' : 'var(--neg)', fontWeight: 600 }}>
+                        {alpha >= 0 ? '▲' : '▼'} Alpha: {alpha >= 0 ? '+' : ''}{alpha.toFixed(2)}%
+                      </span>
+                    </div>
                   </div>
                 )
               })}
             </div>
 
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10, padding: '8px 0 0', borderTop: '1px solid var(--border)', lineHeight: 1.6 }}>
-              ⚠ Benchmark data is indicative. Portfolio returns use live prices. Nifty data is approximate — connect to a market data API for real-time index values.
+              ⚠ Index returns are indicative based on historical monthly data. Portfolio returns derived from live prices. Connect to NSE/BSE data feed for real-time index tracking.
             </div>
           </div>
         </>
