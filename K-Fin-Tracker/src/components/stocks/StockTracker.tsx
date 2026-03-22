@@ -195,15 +195,16 @@ export default function StockTracker() {
   enriched.forEach(h => sectorMap.set(h.sector || 'Other', (sectorMap.get(h.sector || 'Other') || 0) + h.current_value))
   const sectorEntries = [...sectorMap.entries()].sort((a, b) => b[1] - a[1])
 
-  /* ── P&L line chart data ── */
+  /* ── P&L line chart data — uses dynamic month labels ── */
+  const pnlMonths = getMonthLabels(12)
   const pnlLineData = {
-    labels: MONTHS,
+    labels: pnlMonths,
     datasets: [
       {
         label: 'My Portfolio',
-        data: MONTHS.map((_, i) => {
+        data: pnlMonths.map((_, i) => {
           const base = pnl.totalInvested || 100000
-          return +(base * (1 + (i + 1) * 0.016 + (Math.random() - 0.3) * 0.012)).toFixed(0)
+          return +(base * (1 + (i + 1) * 0.016 + (Math.sin(i) * 0.008))).toFixed(0)
         }),
         borderColor: '#8B5CF6',
         backgroundColor: 'rgba(139,92,246,0.08)',
@@ -212,7 +213,7 @@ export default function StockTracker() {
       },
       {
         label: 'Invested',
-        data: MONTHS.map((_, i) => {
+        data: pnlMonths.map((_, i) => {
           const base = pnl.totalInvested || 100000
           return +(base * (1 + i * 0.005)).toFixed(0)
         }),
@@ -220,46 +221,6 @@ export default function StockTracker() {
         backgroundColor: 'transparent',
         fill: false, tension: 0.4, pointRadius: 0,
         borderDash: [5, 4], borderWidth: 1.5,
-      },
-    ],
-  }
-
-  /* ── Benchmark comparison chart ── */
-  const portfolioMonthly = MONTHS.map((_, i) => +(2.1 + (Math.random() - 0.35) * 3).toFixed(2))
-  const cumulativePortfolio = portfolioMonthly.reduce((acc, v, i) => {
-    acc.push(+(((i === 0 ? 100 : acc[i - 1]) * (1 + v / 100))).toFixed(2))
-    return acc
-  }, [] as number[])
-  const cumulativeNifty = NIFTY_MONTHLY.reduce((acc, v, i) => {
-    acc.push(+(((i === 0 ? 100 : acc[i - 1]) * (1 + v / 100))).toFixed(2))
-    return acc
-  }, [] as number[])
-  const cumulativeNiftyNext = NIFTY_MONTHLY.map((v, i) => +(v * 0.72).toFixed(2)).reduce((acc, v, i) => {
-    acc.push(+(((i === 0 ? 100 : acc[i - 1]) * (1 + v / 100))).toFixed(2))
-    return acc
-  }, [] as number[])
-
-  const benchmarkData = {
-    labels: MONTHS,
-    datasets: [
-      {
-        label: 'My Portfolio',
-        data: cumulativePortfolio,
-        borderColor: '#8B5CF6', backgroundColor: 'rgba(139,92,246,0.06)',
-        fill: true, tension: 0.4, pointRadius: 2, borderWidth: 2,
-      },
-      {
-        label: 'Nifty 50',
-        data: cumulativeNifty,
-        borderColor: '#06B6D4', backgroundColor: 'transparent',
-        fill: false, tension: 0.4, pointRadius: 2, borderWidth: 2,
-      },
-      {
-        label: 'Nifty Next 50',
-        data: cumulativeNiftyNext,
-        borderColor: '#F59E0B', backgroundColor: 'transparent',
-        fill: false, tension: 0.4, pointRadius: 2, borderWidth: 1.5,
-        borderDash: [4, 3],
       },
     ],
   }
