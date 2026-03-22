@@ -1,30 +1,18 @@
 // ─── K-Fin Tracker — Stock & Index Data Layer ────────────────────────────────
-// Live quotes:   https://military-jobye-haiqstudios-14f59639.koyeb.app/stock
-// Historical:    https://query1.finance.yahoo.com/v8/finance/chart (Yahoo Finance)
-// Index tickers: Yahoo Finance symbols (^NSEI, ^NSMIDCP etc.)
-// RULE: Zero fabricated data. If fetch fails → return null/[]. Never invent numbers.
+// Live quotes:  NSE proxy (military-jobye-haiqstudios-14f59639.koyeb.app)
+// Historical:   Yahoo Finance v8 via multiple CORS proxies (fallback chain)
+// RULE: Zero fabricated data. If fetch fails → return null / [].
 
 import type { StockHolding, LiveQuote, HealthScore } from '../types'
 
 const API_BASE = import.meta.env.VITE_STOCK_API_BASE
   || 'https://military-jobye-haiqstudios-14f59639.koyeb.app'
 
-// Yahoo Finance chart API — proxied through allorigins to avoid CORS
-const YF_PROXY = 'https://query1.finance.yahoo.com/v8/finance/chart'
-
 // ─── Types ────────────────────────────────────────────────────────────────────
-export interface HistPoint {
-  date:  string   // YYYY-MM-DD
-  close: number
-}
+export interface HistPoint { date: string; close: number }
+export interface SearchResult { symbol: string; company_name: string; exchange: string }
 
-export interface SearchResult {
-  symbol:       string
-  company_name: string
-  exchange:     string
-}
-
-// ─── Market hours (IST) ───────────────────────────────────────────────────────
+// ─── Market hours IST ─────────────────────────────────────────────────────────
 export function isMarketOpen(): boolean {
   const ist  = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
   const mins = ist.getHours() * 60 + ist.getMinutes()
@@ -32,22 +20,20 @@ export function isMarketOpen(): boolean {
   return day >= 1 && day <= 5 && mins >= 555 && mins <= 930
 }
 
-// ─── Cache ────────────────────────────────────────────────────────────────────
+// ─── In-memory cache ──────────────────────────────────────────────────────────
 const quoteCache = new Map<string, { data: LiveQuote; ts: number }>()
 const histCache  = new Map<string, { data: HistPoint[]; ts: number }>()
-const TTL_LIVE   = isMarketOpen() ? 60_000 : 4 * 3600_000
-const TTL_HIST   = 6 * 3600_000
 
 // ─── Index definitions ────────────────────────────────────────────────────────
 export const INDEX_TICKERS: Record<string, { label: string; yahoo: string; color: string }> = {
-  NIFTY50:     { label: 'Nifty 50',           yahoo: '^NSEI',       color: '#06B6D4' },
-  NIFTYNXT50:  { label: 'Nifty Next 50',      yahoo: '^NSMIDCP',    color: '#F59E0B' },
-  NIFTY100:    { label: 'Nifty 100',          yahoo: '^CNX100',     color: '#10B981' },
-  NIFTY150:    { label: 'Nifty 150',          yahoo: '^NSEI',       color: '#8B5CF6' },  // fallback NSEI
-  NIFTYMID50:  { label: 'Nifty Midcap 50',   yahoo: '^NSEMDCP50',  color: '#F472B6' },
-  NIFTYMID100: { label: 'Nifty Midcap 100',  yahoo: '^CNXMDCP100', color: '#FB923C' },
-  NIFTYSML100: { label: 'Nifty Smallcap 100',yahoo: '^CNXSC',      color: '#34D399' },
-  NIFTYSML250: { label: 'Nifty Smallcap 250',yahoo: '^CNXSC250',   color: '#60A5FA' },
+  NIFTY50:     { label: 'Nifty 50',           yahoo: '%5ENSEI',      color: '#06B6D4' },
+  NIFTYNXT50:  { label: 'Nifty Next 50',      yahoo: '%5ENSMIDCP',   color: '#F59E0B' },
+  NIFTY100:    { label: 'Nifty 100',          yahoo: '%5ECNX100',    color: '#10B981' },
+  NIFTY150:    { label: 'Nifty 150',          yahoo: '%5ENSEI',      color: '#8B5CF6' },
+  NIFTYMID50:  { label: 'Nifty Midcap 50',   yahoo: '%5ENISEMDCP50',color: '#F472B6' },
+  NIFTYMID100: { label: 'Nifty Midcap 100',  yahoo: '%5ECNXMDCP100',color: '#FB923C' },
+  NIFTYSML100: { label: 'Nifty Smallcap 100',yahoo: '%5ECNXSC',     color: '#34D399' },
+  NIFTYSML250: { label: 'Nifty Smallcap 250',yahoo: '%5ECNXSC250',  color: '#60A5FA' },
 }
 
 export const INDEX_GROUPS = [
@@ -66,80 +52,93 @@ export const TIME_RANGES = [
   { id: 'ALL', label: 'All', period: 'max',  interval: '1mo' },
 ]
 
-// ─── Popular stocks for search ────────────────────────────────────────────────
 export const POPULAR_STOCKS: SearchResult[] = [
-  { symbol:'RELIANCE',   company_name:'Reliance Industries Ltd',         exchange:'NSE' },
-  { symbol:'TCS',        company_name:'Tata Consultancy Services',        exchange:'NSE' },
-  { symbol:'HDFCBANK',   company_name:'HDFC Bank Ltd',                    exchange:'NSE' },
-  { symbol:'INFY',       company_name:'Infosys Ltd',                      exchange:'NSE' },
-  { symbol:'ICICIBANK',  company_name:'ICICI Bank Ltd',                   exchange:'NSE' },
-  { symbol:'SBIN',       company_name:'State Bank of India',              exchange:'NSE' },
-  { symbol:'BAJFINANCE', company_name:'Bajaj Finance Ltd',                exchange:'NSE' },
-  { symbol:'BHARTIARTL', company_name:'Bharti Airtel Ltd',                exchange:'NSE' },
-  { symbol:'WIPRO',      company_name:'Wipro Ltd',                        exchange:'NSE' },
-  { symbol:'TITAN',      company_name:'Titan Company Ltd',                exchange:'NSE' },
-  { symbol:'MARUTI',     company_name:'Maruti Suzuki India Ltd',          exchange:'NSE' },
-  { symbol:'ITC',        company_name:'ITC Ltd',                          exchange:'NSE' },
-  { symbol:'HINDZINC',   company_name:'Hindustan Zinc Ltd',               exchange:'NSE' },
-  { symbol:'MOTHERSON',  company_name:'Samvardhana Motherson Intl',       exchange:'NSE' },
-  { symbol:'TATAMOTORS', company_name:'Tata Motors Ltd',                  exchange:'NSE' },
-  { symbol:'TATAMTRDVR', company_name:'Tata Motors DVR',                  exchange:'NSE' },
+  { symbol:'RELIANCE',   company_name:'Reliance Industries Ltd',      exchange:'NSE' },
+  { symbol:'TCS',        company_name:'Tata Consultancy Services',     exchange:'NSE' },
+  { symbol:'HDFCBANK',   company_name:'HDFC Bank Ltd',                 exchange:'NSE' },
+  { symbol:'INFY',       company_name:'Infosys Ltd',                   exchange:'NSE' },
+  { symbol:'ICICIBANK',  company_name:'ICICI Bank Ltd',                exchange:'NSE' },
+  { symbol:'SBIN',       company_name:'State Bank of India',           exchange:'NSE' },
+  { symbol:'BAJFINANCE', company_name:'Bajaj Finance Ltd',             exchange:'NSE' },
+  { symbol:'BHARTIARTL', company_name:'Bharti Airtel Ltd',             exchange:'NSE' },
+  { symbol:'WIPRO',      company_name:'Wipro Ltd',                     exchange:'NSE' },
+  { symbol:'TITAN',      company_name:'Titan Company Ltd',             exchange:'NSE' },
+  { symbol:'ITC',        company_name:'ITC Ltd',                       exchange:'NSE' },
+  { symbol:'HINDZINC',   company_name:'Hindustan Zinc Ltd',            exchange:'NSE' },
+  { symbol:'MOTHERSON',  company_name:'Samvardhana Motherson Intl',    exchange:'NSE' },
+  { symbol:'TATAMOTORS', company_name:'Tata Motors Ltd',               exchange:'NSE' },
+  { symbol:'TATAMTRDVR', company_name:'Tata Motors DVR',               exchange:'NSE' },
+  { symbol:'MARUTI',     company_name:'Maruti Suzuki India',           exchange:'NSE' },
 ]
 
-// ─── Fetch live quote from the proxy API ──────────────────────────────────────
+// ─── Live quote ───────────────────────────────────────────────────────────────
 export async function fetchLiveQuote(
   symbol: string,
   exchange: 'NSE' | 'BSE' = 'NSE'
 ): Promise<LiveQuote | null> {
   const key = `q:${symbol}:${exchange}`
   const hit = quoteCache.get(key)
-  const ttl = isMarketOpen() ? TTL_LIVE : 4 * 3600_000
+  const ttl = isMarketOpen() ? 60_000 : 4 * 3600_000
   if (hit && Date.now() - hit.ts < ttl) return hit.data
 
   try {
-    // API accepts: SYMBOL (NSE default), SYMBOL.NS (NSE explicit), SYMBOL.BO (BSE)
+    // The proxy expects just the symbol for NSE, symbol.BO for BSE
     const sym = exchange === 'BSE' ? `${symbol}.BO` : symbol
-    const res  = await fetch(`${API_BASE}/stock?symbol=${encodeURIComponent(sym)}`)
+    const res  = await fetch(`${API_BASE}/stock?symbol=${encodeURIComponent(sym)}`, {
+      headers: { 'Accept': 'application/json' },
+    })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const json = await res.json()
-    if (json.status !== 'success' || !json.data) throw new Error('no data')
 
-    const d = json.data
-    const ltp = d.regularMarketPrice ?? d.currentPrice ?? 0
-    if (!ltp || !isFinite(ltp)) throw new Error('invalid ltp')
+    // The proxy wraps data under json.data or returns it directly
+    const d = json.data ?? json
+
+    // Try multiple field names — different proxy versions use different keys
+    const ltp = d.regularMarketPrice
+      ?? d.currentPrice
+      ?? d.price
+      ?? d.lastPrice
+      ?? 0
+
+    if (!ltp || !isFinite(ltp) || ltp <= 0) throw new Error(`bad ltp: ${ltp}`)
+
+    const prev = d.regularMarketPreviousClose ?? d.previousClose ?? ltp
+    const chg  = d.regularMarketChange ?? d.change ?? (ltp - prev)
+    const chgP = d.regularMarketChangePercent ?? d.changePercent ?? (prev > 0 ? (chg / prev) * 100 : 0)
 
     const quote: LiveQuote = {
       symbol,
-      company_name: d.longName || d.shortName || symbol,
+      company_name: d.longName || d.shortName || d.companyName || symbol,
       exchange,
-      ltp,
-      open:         d.regularMarketOpen         ?? ltp,
-      high:         d.regularMarketDayHigh       ?? ltp,
-      low:          d.regularMarketDayLow        ?? ltp,
-      prev_close:   d.regularMarketPreviousClose ?? ltp,
-      change:       d.regularMarketChange        ?? 0,
-      change_pct:   d.regularMarketChangePercent ?? 0,
-      volume:       d.regularMarketVolume        ?? 0,
+      ltp:          +ltp.toFixed(2),
+      open:         +(d.regularMarketOpen ?? d.open ?? ltp).toFixed(2),
+      high:         +(d.regularMarketDayHigh ?? d.dayHigh ?? ltp).toFixed(2),
+      low:          +(d.regularMarketDayLow  ?? d.dayLow  ?? ltp).toFixed(2),
+      prev_close:   +prev.toFixed(2),
+      change:       +chg.toFixed(2),
+      change_pct:   +chgP.toFixed(4),
+      volume:       d.regularMarketVolume ?? d.volume ?? 0,
       market_cap:   d.marketCap,
       pe_ratio:     d.trailingPE,
       week_52_high: d.fiftyTwoWeekHigh,
       week_52_low:  d.fiftyTwoWeekLow,
       last_updated: new Date().toISOString(),
     }
+
     quoteCache.set(key, { data: quote, ts: Date.now() })
     return quote
-  } catch {
-    // Return stale cache if available — real stale > nothing
-    return hit?.data ?? null
+  } catch (e) {
+    console.warn(`Quote failed for ${symbol}:`, e)
+    return hit?.data ?? null  // stale cache > nothing
   }
 }
 
-// ─── Fetch multiple quotes (batched, 5 at a time) ─────────────────────────────
+// ─── Multiple quotes (batched) ────────────────────────────────────────────────
 export async function fetchMultipleQuotes(
   holdings: { symbol: string; exchange: 'NSE' | 'BSE' }[]
 ): Promise<Map<string, LiveQuote>> {
   const result = new Map<string, LiveQuote>()
-  const BATCH  = 5
+  const BATCH  = 4  // keep parallel requests low to avoid rate limiting
   for (let i = 0; i < holdings.length; i += BATCH) {
     const batch   = holdings.slice(i, i + BATCH)
     const settled = await Promise.allSettled(
@@ -150,74 +149,85 @@ export async function fetchMultipleQuotes(
         result.set(batch[idx].symbol, r.value)
       }
     })
-    if (i + BATCH < holdings.length) await new Promise(r => setTimeout(r, 250))
+    if (i + BATCH < holdings.length) await new Promise(r => setTimeout(r, 400))
   }
   return result
 }
 
-// ─── Fetch historical OHLC from Yahoo Finance via allorigins CORS proxy ───────
-// Yahoo Finance v8 chart API works for both stocks (.NS) and indices (^NSEI)
+// ─── Yahoo Finance historical data ───────────────────────────────────────────
+// Uses a chain of CORS proxies — tries each until one works
 async function fetchYahooHistory(
-  yahooTicker: string,
-  period:   string,  // '1mo','3mo','6mo','1y','3y','5y','max'
-  interval: string   // '1d','1wk','1mo'
+  ticker: string,   // raw yahoo ticker e.g. "^NSEI" or "TATAMOTORS.NS"
+  period: string,
+  interval: string
 ): Promise<HistPoint[]> {
-  const cacheKey = `h:${yahooTicker}:${period}:${interval}`
+  const cacheKey = `h:${ticker}:${period}:${interval}`
   const hit = histCache.get(cacheKey)
-  if (hit && Date.now() - hit.ts < TTL_HIST) return hit.data
+  if (hit && Date.now() - hit.ts < 6 * 3600_000) return hit.data
 
-  try {
-    // Use allorigins to bypass CORS for Yahoo Finance
-    const yfUrl  = `${YF_PROXY}/${encodeURIComponent(yahooTicker)}?period1=0&period2=9999999999&range=${period}&interval=${interval}&events=history`
-    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(yfUrl)}`
+  // Yahoo Finance v8 chart URL
+  const yfPath = `v8/finance/chart/${encodeURIComponent(ticker)}?range=${period}&interval=${interval}&events=history&includeAdjustedClose=true`
 
-    const res  = await fetch(proxyUrl)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const wrap = await res.json()
-    if (!wrap.contents) throw new Error('empty proxy')
+  // CORS proxy chain — try each until one succeeds
+  const proxies = [
+    `https://api.allorigins.win/get?url=${encodeURIComponent(`https://query1.finance.yahoo.com/${yfPath}`)}`,
+    `https://api.allorigins.win/get?url=${encodeURIComponent(`https://query2.finance.yahoo.com/${yfPath}`)}`,
+    `https://corsproxy.io/?${encodeURIComponent(`https://query1.finance.yahoo.com/${yfPath}`)}`,
+  ]
 
-    const json    = JSON.parse(wrap.contents)
-    const chart   = json?.chart?.result?.[0]
-    if (!chart)   throw new Error('no chart result')
+  for (const proxyUrl of proxies) {
+    try {
+      const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) })
+      if (!res.ok) continue
 
-    const timestamps: number[]      = chart.timestamp || []
-    const closes:     number[]      = chart.indicators?.quote?.[0]?.close || []
-    const adjCloses:  number[]      = chart.indicators?.adjclose?.[0]?.adjclose || closes
+      let rawJson: unknown
+      const text = await res.text()
 
-    const points: HistPoint[] = []
-    for (let i = 0; i < timestamps.length; i++) {
-      const c = adjCloses[i] ?? closes[i]
-      if (!c || !isFinite(c) || c <= 0) continue
-      const date = new Date(timestamps[i] * 1000).toISOString().split('T')[0]
-      points.push({ date, close: +c.toFixed(2) })
-    }
+      // allorigins wraps in { contents: "..." }
+      if (proxyUrl.includes('allorigins')) {
+        const wrap = JSON.parse(text)
+        if (!wrap.contents) continue
+        rawJson = JSON.parse(wrap.contents)
+      } else {
+        rawJson = JSON.parse(text)
+      }
 
-    // Sort by date ascending
-    points.sort((a, b) => a.date.localeCompare(b.date))
+      const json   = rawJson as { chart?: { result?: Array<{ timestamp?: number[]; indicators?: { quote?: Array<{ close?: number[] }>; adjclose?: Array<{ adjclose?: number[] }> } }> } }
+      const chart  = json?.chart?.result?.[0]
+      if (!chart) continue
 
-    if (points.length === 0) throw new Error('no valid points')
+      const timestamps = chart.timestamp || []
+      const closes     = chart.indicators?.quote?.[0]?.close || []
+      const adjcloses  = chart.indicators?.adjclose?.[0]?.adjclose || closes
 
-    histCache.set(cacheKey, { data: points, ts: Date.now() })
-    return points
-  } catch {
-    // Return stale cache if available
-    if (hit) return hit.data
-    return []
+      const points: HistPoint[] = []
+      for (let i = 0; i < timestamps.length; i++) {
+        const c = adjcloses[i] ?? closes[i]
+        if (!c || !isFinite(c) || c <= 0) continue
+        const date = new Date(timestamps[i] * 1000).toISOString().split('T')[0]
+        points.push({ date, close: +c.toFixed(2) })
+      }
+      points.sort((a, b) => a.date.localeCompare(b.date))
+      if (!points.length) continue
+
+      histCache.set(cacheKey, { data: points, ts: Date.now() })
+      return points
+    } catch { continue }
   }
+
+  // All proxies failed
+  console.warn(`Historical data unavailable for ${ticker}`)
+  return hit?.data ?? []
 }
 
-// ─── Fetch historical prices for a single NSE stock ──────────────────────────
+// ─── Stock history ────────────────────────────────────────────────────────────
 export async function fetchStockHistory(
-  symbol:   string,
-  period:   string,
-  interval: string
+  symbol: string, period: string, interval: string
 ): Promise<HistPoint[]> {
   return fetchYahooHistory(`${symbol}.NS`, period, interval)
 }
 
-// ─── Fetch historical values for the whole portfolio ─────────────────────────
-// Fetches price history for each stock and multiplies by quantity
-// Returns daily portfolio value (sum of all holdings × their price on that day)
+// ─── Portfolio history — daily value = sum(qty × price) ──────────────────────
 export async function fetchPortfolioHistory(
   holdings: StockHolding[],
   period:   string,
@@ -225,70 +235,61 @@ export async function fetchPortfolioHistory(
 ): Promise<HistPoint[]> {
   if (!holdings.length) return []
 
+  // Fetch all stock histories in parallel
   const allHist = await Promise.all(
     holdings.map(h =>
       fetchStockHistory(h.symbol, period, interval)
-        .then(pts => ({ h, pts }))
+        .then(pts => ({ h, pts, priceMap: new Map(pts.map(p => [p.date, p.close])) }))
     )
   )
 
-  // Collect all dates from all stocks
-  const dateSet = new Set<string>()
-  allHist.forEach(({ pts }) => pts.forEach(p => dateSet.add(p.date)))
-  const dates = [...dateSet].sort()
-  if (!dates.length) return []
+  // Collect all trading dates across all stocks
+  const allDates = [...new Set(allHist.flatMap(({ pts }) => pts.map(p => p.date)))].sort()
+  if (!allDates.length) return []
 
-  // Build price maps per stock for O(1) lookup
-  const priceMaps = allHist.map(({ h, pts }) => ({
-    h,
-    map: new Map(pts.map(p => [p.date, p.close])),
-    // last known price — for dates where no data exists
-    pts,
-  }))
-
-  return dates.map(date => {
+  return allDates.map(date => {
     let totalValue = 0
-    let covered    = 0
-    for (const { h, map, pts } of priceMaps) {
-      const price = map.get(date)
-      if (price) {
+    let covered = 0
+    for (const { h, pts, priceMap } of allHist) {
+      let price = priceMap.get(date)
+      if (!price) {
+        // Fill forward — use last available price before this date
+        const prev = pts.filter(p => p.date <= date)
+        price = prev.length ? prev[prev.length - 1].close : undefined
+      }
+      if (price && isFinite(price)) {
         totalValue += h.quantity * price
         covered++
       } else {
-        // Use last available price before this date
-        const prev = pts.filter(p => p.date <= date).slice(-1)[0]
-        if (prev) {
-          totalValue += h.quantity * prev.close
-          covered++
-        }
-        // If no price at all, skip this stock for this date
+        // Fall back to avg_buy_price so the invested line stays accurate
+        totalValue += h.quantity * h.avg_buy_price
+        covered++
       }
     }
-    // Only include date if at least one stock has data
-    return covered > 0 ? { date, close: +totalValue.toFixed(2) } : null
-  }).filter((p): p is HistPoint => p !== null)
+    return { date, close: +totalValue.toFixed(2) }
+  }).filter(p => p.close > 0)
 }
 
-// ─── Fetch index historical data ──────────────────────────────────────────────
+// ─── Index history ────────────────────────────────────────────────────────────
 export async function fetchIndexHistory(
-  indexId:  string,
-  period:   string,
-  interval: string
+  indexId: string, period: string, interval: string
 ): Promise<HistPoint[]> {
   const idx = INDEX_TICKERS[indexId]
   if (!idx) return []
-  return fetchYahooHistory(idx.yahoo, period, interval)
+  // Decode %5E back to ^ for the actual ticker
+  const ticker = decodeURIComponent(idx.yahoo)
+  return fetchYahooHistory(ticker, period, interval)
 }
 
-// ─── Rebase a series so first point = 100 ────────────────────────────────────
+// ─── Rebase to 100 ────────────────────────────────────────────────────────────
 export function rebaseTo100(points: HistPoint[]): HistPoint[] {
   if (!points.length) return []
   const base = points[0].close
-  if (!base || base === 0) return []
+  if (!base || base <= 0) return []
   return points.map(p => ({ date: p.date, close: +((p.close / base) * 100).toFixed(3) }))
 }
 
-// ─── Search stocks ────────────────────────────────────────────────────────────
+// ─── Search ───────────────────────────────────────────────────────────────────
 export async function searchStocks(query: string): Promise<SearchResult[]> {
   if (query.length < 2) return []
   try {
@@ -309,7 +310,7 @@ export async function searchStocks(query: string): Promise<SearchResult[]> {
   }
 }
 
-// ─── Portfolio P&L — real prices only ────────────────────────────────────────
+// ─── Portfolio P&L — only real prices ────────────────────────────────────────
 export function computePortfolioPnL(
   holdings: StockHolding[],
   quotes:   Map<string, LiveQuote>
@@ -327,8 +328,7 @@ export function computePortfolioPnL(
       currentValue += h.quantity * q.ltp
       if (marketOpen && isFinite(q.change)) dayPnL += h.quantity * q.change
     } else {
-      // No real quote yet → use invested value (no fake P&L)
-      currentValue += invested
+      currentValue += invested  // no fake P&L when price unavailable
     }
   })
 
@@ -352,12 +352,12 @@ export function computeHealthScore(
   const maxVal   = Math.max(...vals)
   const topPct   = totalVal > 0 ? (maxVal / totalVal) * 100 : 0
   const winners  = holdings.filter(h => (quotes.get(h.symbol)?.change_pct ?? 0) >= 0).length
-  const overall  = Math.round(
+  const overall  = Math.min(100, Math.round(
     Math.min(sectors.size * 12, 40) +
     Math.max(30 - topPct * 0.5, 0) +
     Math.min(holdings.length * 2, 20) +
-    (winners / holdings.length) * 10
-  )
+    (holdings.length > 0 ? (winners / holdings.length) * 10 : 0)
+  ))
   const risk_level = topPct > 50 ? 'Very High' : topPct > 35 ? 'High' : topPct > 20 ? 'Moderate' : 'Low'
   return { overall, risk_level, top_holding_pct: topPct, sector_count: sectors.size }
 }
