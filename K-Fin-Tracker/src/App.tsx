@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import type { User } from '@supabase/supabase-js'
 import { ThemeProvider, useTheme } from './lib/ThemeContext'
+import PortfolioProvider from './lib/PortfolioProvider'
 import { supabase } from './lib/supabase'
 import './styles/globals.css'
 
@@ -11,7 +12,7 @@ import Dashboard    from './pages/Dashboard'
 import StockTracker from './components/stocks/StockTracker'
 
 // ── Your allowed email ────────────────────────────────────────────────────────
-const ALLOWED_EMAIL = 'karthiksurya611@gmail.com'     // ← replace with your Gmail
+const ALLOWED_EMAIL = 'karthiksurya611@gmail.com'
 const NTFY_TOPIC    = 'kfin-karthik-9876'       // ← replace with your ntfy topic
 
 // ── Piggy loader ──────────────────────────────────────────────────────────────
@@ -123,7 +124,9 @@ function AppInner() {
 export default function App() {
   return (
     <ThemeProvider>
-      <AppInner />
+      <PortfolioProvider>
+        <AppInner />
+      </PortfolioProvider>
     </ThemeProvider>
   )
 }
