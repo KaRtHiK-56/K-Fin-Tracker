@@ -66,7 +66,7 @@ export default function ImportModal({ onClose, onImport }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>('file')
   const [dragging,  setDragging]  = useState(false)
   const [parsing,   setParsing]   = useState(false)
-  const [result,    setResult]    = useState<{ success: StockHolding[]; errors: { row: number; reason: string; raw: string }[]; platform: string } | null>(null)
+  const [result,    setResult]    = useState<{ success: StockHolding[]; errors: { row: number; reason: string; raw: string }[]; platform: string; summary?: { investedValue?: number; closingValue?: number; unrealisedPnl?: number; clientName?: string } } | null>(null)
   const [selected,  setSelected]  = useState<Set<string>>(new Set())
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -291,6 +291,16 @@ export default function ImportModal({ onClose, onImport }: Props) {
                 </tbody>
               </table>
             </div>
+
+            {/* Groww summary */}
+            {result.summary && (result.summary.clientName || result.summary.investedValue) && (
+              <div style={{ background: 'var(--brand-pale)', border: '1px solid var(--border-hover)', borderRadius: 10, padding: '10px 14px', display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+                {result.summary.clientName && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>👤 <b style={{ color: 'var(--text-primary)' }}>{result.summary.clientName}</b></span>}
+                {result.summary.investedValue && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Invested: <b style={{ color: 'var(--text-primary)', fontFamily: 'var(--mono)' }}>₹{result.summary.investedValue.toLocaleString('en-IN')}</b></span>}
+                {result.summary.closingValue  && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Value: <b style={{ color: 'var(--brand)', fontFamily: 'var(--mono)' }}>₹{result.summary.closingValue.toLocaleString('en-IN')}</b></span>}
+                {result.summary.unrealisedPnl !== undefined && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>P&L: <b style={{ color: result.summary.unrealisedPnl >= 0 ? 'var(--pos)' : 'var(--neg)', fontFamily: 'var(--mono)' }}>{result.summary.unrealisedPnl >= 0 ? '+' : ''}₹{result.summary.unrealisedPnl.toLocaleString('en-IN')}</b></span>}
+              </div>
+            )}
 
             {/* Errors */}
             {result.errors.length > 0 && (
