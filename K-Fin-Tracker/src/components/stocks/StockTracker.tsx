@@ -13,6 +13,7 @@ import {
 } from '../../lib/stockApi'
 import type { StockHolding, StockWithQuote, LiveQuote, SortField, SortDir } from '../../types'
 import { useTheme } from '../../lib/ThemeContext'
+import { usePortfolio } from '../../lib/portfolioStore'
 import ImportModal from './ImportModal'
 import styles from './StockTracker.module.css'
 
@@ -67,7 +68,8 @@ const fL = (n: number) => {
 ══════════════════════════════════════════════════════════════════════════════ */
 export default function StockTracker() {
   const { isDark } = useTheme()
-  const [holdings,   setHoldings]   = useState<StockHolding[]>([])
+  // ── Global portfolio store — persists to localStorage, shared with Dashboard
+  const { holdings, setHoldings, setSnapshot } = usePortfolio()
   const [quotes,     setQuotes]     = useState<Map<string, LiveQuote>>(new Map())
   const [loading,    setLoading]    = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -116,7 +118,13 @@ export default function StockTracker() {
     }
   }, [])
 
-  useEffect(() => { if (holdings.length) loadQuotes(holdings) }, [holdings, loadQuotes])
+  // Load quotes on mount + whenever holdings change
+  useEffect(() => {
+    if (holdings.length) {
+      setLoading(true)
+      loadQuotes(holdings)
+    }
+  }, [holdings.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Auto-refresh during market hours ── */
   useEffect(() => {
@@ -188,6 +196,20 @@ export default function StockTracker() {
   const health   = computeHealthScore(holdings, quotes)
   const hasData  = holdings.length > 0
 
+  // ── Sync live P&L snapshot to global store → Dashboard reads this ──────────
+  useEffect(() => {
+    if (!hasData) return
+    setSnapshot({
+      totalInvested: pnl.totalInvested,
+      currentValue:  pnl.currentValue,
+      totalPnL:      pnl.totalPnL,
+      totalPnLPct:   pnl.totalPnLPct,
+      dayPnL:        pnl.dayPnL,
+      dayPnLPct:     pnl.dayPnLPct,
+      lastUpdated:   new Date().toISOString(),
+    })
+  }, [pnl.totalInvested, pnl.currentValue, pnl.totalPnL, pnl.dayPnL])
+
   /* ── Sorted + filtered table rows ── */
   const rows = [...enriched]
     .filter(h =>
@@ -206,31 +228,41 @@ export default function StockTracker() {
   enriched.forEach(h => sectorMap.set(h.sector || 'Other', (sectorMap.get(h.sector || 'Other') || 0) + h.current_value))
   const sectorEntries = [...sectorMap.entries()].sort((a, b) => b[1] - a[1])
 
-  /* ── P&L growth chart — real portfolio value history ── */
+  /* ── P&L growth chart ────────────────────────────────────────────────────
+     Shows two lines only:
+       1. Portfolio value over time (₹) — from real historical prices
+       2. Invested amount (flat ₹ line) — your actual cost basis
+     The gap between them IS your P&L.
+  ── */
   const pnlLineData = useMemo(() => {
     const invested = pnl.totalInvested || 0
     if (!portfolioHistory.length || invested === 0) return null
 
-    const fmt = portfolioHistory.length > 90
+    const n   = portfolioHistory.length
+    const fmt = n > 90
       ? (d: string) => new Date(d).toLocaleDateString('en-IN', { month:'short', year:'2-digit' })
       : (d: string) => new Date(d).toLocaleDateString('en-IN', { day:'2-digit', month:'short' })
 
+    const labels   = portfolioHistory.map(p => fmt(p.date))
+    const portVals = portfolioHistory.map(p => p.close)
+    const invLine  = portfolioHistory.map(() => invested)
+
     return {
-      labels: portfolioHistory.map(p => fmt(p.date)),
+      labels,
       datasets: [
         {
-          label: 'Portfolio Value (₹)',
-          data:  portfolioHistory.map(p => p.close),
+          label: 'Portfolio Value',
+          data:  portVals,
           borderColor: '#8B5CF6',
-          backgroundColor: 'rgba(139,92,246,0.08)',
+          backgroundColor: 'rgba(139,92,246,0.10)',
           fill: true, tension: 0.4,
-          pointRadius: portfolioHistory.length > 60 ? 0 : 3,
+          pointRadius: n > 60 ? 0 : 2,
           borderWidth: 2,
         },
         {
-          label: `Invested (₹${(invested/1000).toFixed(0)}K)`,
-          data:  portfolioHistory.map(() => invested),
-          borderColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)',
+          label: `Invested (${fL(invested)})`,
+          data:  invLine,
+          borderColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(100,100,100,0.4)',
           backgroundColor: 'transparent',
           fill: false, tension: 0, pointRadius: 0,
           borderDash: [6, 4], borderWidth: 1.5,
@@ -312,19 +344,36 @@ export default function StockTracker() {
     }
   }, [portfolioHistory, indexHistories, benchmarkIndices])
 
-  const lineOpts = (yLabel: string) => ({
+  const lineOpts = (_yLabel: string) => ({
     responsive: true, maintainAspectRatio: false,
     scales: {
-      x: { grid: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)' }, ticks: { color: isDark ? '#6B6486' : '#8875B5', font: { size: 11 } } },
+      x: {
+        grid: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)' },
+        ticks: { color: isDark ? '#6B6486' : '#8875B5', font: { size: 10 }, maxTicksLimit: 10 },
+      },
       y: {
         grid: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)' },
-        ticks: { color: isDark ? '#6B6486' : '#8875B5', font: { size: 11 }, callback: (v: string | number) => yLabel === '₹' ? fL(Number(v)) : Number(v).toFixed(1) + (yLabel === '%' ? '' : '') },
+        ticks: {
+          color: isDark ? '#6B6486' : '#8875B5',
+          font: { size: 10 },
+          callback: (v: string | number) => fL(Number(v)),
+        },
       },
     },
     plugins: {
-      legend: { display: true, position: 'top' as const, labels: { color: isDark ? '#A89EC0' : '#4B3F72', font: { size: 11 }, boxWidth: 12, padding: 16 } },
-      tooltip: { callbacks: { label: (ctx: { dataset: { label?: string }; raw: unknown }) => `${ctx.dataset.label}: ${yLabel === '₹' ? fL(ctx.raw as number) : (ctx.raw as number).toFixed(2)}` } },
+      legend: {
+        display: true, position: 'top' as const,
+        labels: { color: isDark ? '#A89EC0' : '#4B3F72', font: { size: 11 }, boxWidth: 12, padding: 14 },
+      },
+      tooltip: {
+        callbacks: {
+          label: (ctx: { dataset: { label?: string }; raw: unknown }) =>
+            ` ${ctx.dataset.label}: ${fL(ctx.raw as number)}`,
+        },
+        mode: 'index' as const, intersect: false,
+      },
     },
+    interaction: { mode: 'index' as const, intersect: false },
   })
 
   /* ── Mini sparkline chart ── */
@@ -838,9 +887,10 @@ export default function StockTracker() {
                   <Line data={pnlLineData} options={lineOpts('₹') as never} />
                 )}
               </div>
-              <div style={{ display: 'flex', gap: 16, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Total P&L: <span style={{ color: pnl.totalPnL >= 0 ? 'var(--pos)' : 'var(--neg)', fontWeight: 600 }}>{pnl.totalPnL >= 0 ? '+' : ''}{fL(pnl.totalPnL)} ({pnl.totalPnLPct >= 0 ? '+' : ''}{pnl.totalPnLPct.toFixed(1)}%)</span></div>
-                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Today: <span style={{ color: pnl.dayPnL >= 0 ? 'var(--pos)' : 'var(--neg)', fontWeight: 600 }}>{pnl.dayPnL >= 0 ? '+' : ''}{fL(pnl.dayPnL)}</span></div>
+              <div style={{ display: 'flex', gap: 20, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Invested: <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{fL(pnl.totalInvested)}</span></div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Current: <span style={{ color: 'var(--brand)', fontWeight: 600 }}>{pnl.currentValue !== pnl.totalInvested ? fL(pnl.currentValue) : 'Loading…'}</span></div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>P&L: <span style={{ color: pnl.totalPnL >= 0 ? 'var(--pos)' : 'var(--neg)', fontWeight: 600 }}>{pnl.currentValue !== pnl.totalInvested ? `${pnl.totalPnL >= 0 ? '+' : ''}${fL(pnl.totalPnL)} (${pnl.totalPnLPct >= 0 ? '+' : ''}${pnl.totalPnLPct.toFixed(2)}%)` : '—'}</span></div>
               </div>
             </div>
           </div>
