@@ -10,6 +10,7 @@ import {
 } from '../../lib/stockApi'
 import type { StockHolding, StockWithQuote, LiveQuote, SortField, SortDir } from '../../types'
 import { useTheme } from '../../lib/ThemeContext'
+import ImportModal from './ImportModal'
 import styles from './StockTracker.module.css'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler, ArcElement, Legend)
@@ -75,6 +76,7 @@ export default function StockTracker() {
   const [filter,     setFilter]     = useState('')
   const [selected,   setSelected]   = useState<StockWithQuote | null>(null)
   const [showModal,  setShowModal]  = useState(false)
+  const [showImport, setShowImport] = useState(false)
   const [editingId,  setEditingId]  = useState<string | null>(null)
   const [form,       setForm]       = useState<FormData>(EMPTY)
   const [searchQ,    setSearchQ]    = useState('')
@@ -312,6 +314,23 @@ export default function StockTracker() {
     setShowModal(false)
   }
 
+  const handleImportDone = (imported: StockHolding[]) => {
+    setHoldings(prev => {
+      const existingSymbols = new Set(prev.map(h => h.symbol))
+      const newOnes = imported.filter(h => !existingSymbols.has(h.symbol))
+      const merged = imported.filter(h => existingSymbols.has(h.symbol)).map(imp => {
+        const existing = prev.find(h => h.symbol === imp.symbol)!
+        const totalQty = existing.quantity + imp.quantity
+        const avgPrice = ((existing.quantity * existing.avg_buy_price) + (imp.quantity * imp.avg_buy_price)) / totalQty
+        return { ...existing, quantity: totalQty, avg_buy_price: +avgPrice.toFixed(2) }
+      })
+      const unchanged = prev.filter(h => !imported.find(i => i.symbol === h.symbol))
+      return [...unchanged, ...merged, ...newOnes]
+    })
+    setShowImport(false)
+    setLoading(true)
+  }
+
   /* ── CSS shorthands ── */
   const bdC = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(124,58,237,0.06)'
   const thC = isDark ? 'rgba(255,255,255,0.03)' : 'rgba(124,58,237,0.04)'
@@ -337,6 +356,7 @@ export default function StockTracker() {
               onClick={() => { setRefreshing(true); loadQuotes(holdings) }} title="Refresh prices">↻
             </button>
           )}
+          <button className={styles.importBtn} onClick={() => setShowImport(true)}>⬆ Import CSV</button>
           <button className={styles.addBtn} onClick={openAdd}>＋ Add Stock</button>
         </div>
       </div>
@@ -754,6 +774,9 @@ export default function StockTracker() {
           </div>
         </>
       )}
+
+      {/* ── IMPORT MODAL ── */}
+      {showImport && <ImportModal onClose={() => setShowImport(false)} onImport={handleImportDone} />}
 
       {/* ══════════════════════════════════════════════════════════════════
           ADD / EDIT MODAL
