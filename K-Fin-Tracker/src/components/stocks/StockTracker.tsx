@@ -90,8 +90,6 @@ export default function StockTracker() {
   const [indexHistories,   setIndexHistories]   = useState<Record<string, HistPoint[]>>({})
   const [histLoading,      setHistLoading]      = useState(false)
   const [histError,        setHistError]        = useState<string | null>(null)
-  const [benchmarkIndices, setBenchmarkIndices] = useState<string[]>(['NIFTY50'])
-  const [timeRange, setTimeRange] = useState('1Y')
   const healthRef = useRef<HTMLDivElement>(null)
 
   /* ── Close health tooltip on outside click ── */
@@ -989,6 +987,7 @@ export default function StockTracker() {
                 interaction: { mode: 'index', intersect: false },
               } as never} />
             </div>
+            )}
 
             {/* ── COMPARISON STAT CARDS ── */}
             {portfolioHistory.length > 0 && (
@@ -1025,7 +1024,7 @@ export default function StockTracker() {
             )}
 
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10, padding: '8px 0 0', borderTop: '1px solid var(--border)', lineHeight: 1.6 }}>
-              ⚠ Index returns are indicative based on historical monthly data. Portfolio returns derived from live prices. Connect to NSE/BSE data feed for real-time index tracking.
+              Data sourced from Yahoo Finance. Portfolio value uses actual closing prices per stock. Index data may be delayed up to 15 minutes during market hours.
             </div>
           </div>
         </>
