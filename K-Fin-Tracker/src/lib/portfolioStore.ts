@@ -18,14 +18,14 @@ export interface PortfolioSnapshot {
 export interface PortfolioState {
   holdings:    StockHolding[]
   snapshot:    PortfolioSnapshot | null
-  setHoldings: (h: StockHolding[]) => void
+  setHoldings: (h: StockHolding[] | ((prev: StockHolding[]) => StockHolding[])) => void
   setSnapshot: (s: PortfolioSnapshot) => void
 }
 
 export const PortfolioContext = createContext<PortfolioState>({
   holdings:    [],
   snapshot:    null,
-  setHoldings: () => {},
+  setHoldings: (_h) => {},
   setSnapshot: () => {},
 })
 
