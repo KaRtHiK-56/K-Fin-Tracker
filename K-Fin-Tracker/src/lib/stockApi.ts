@@ -82,54 +82,68 @@ export async function fetchLiveQuote(
   if (hit && Date.now() - hit.ts < ttl) return hit.data
 
   try {
-    // The proxy expects just the symbol for NSE, symbol.BO for BSE
     const sym = exchange === 'BSE' ? `${symbol}.BO` : symbol
-    const res  = await fetch(`${API_BASE}/stock?symbol=${encodeURIComponent(sym)}`, {
-      headers: { 'Accept': 'application/json' },
-    })
+    const url = `${API_BASE}/stock?symbol=${encodeURIComponent(sym)}`
+    const res = await fetch(url)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
     const json = await res.json()
 
-    // The proxy wraps data under json.data or returns it directly
-    const d = json.data ?? json
+    // Debug: log first quote response to console so we can see the actual structure
+    if (import.meta.env.DEV || !quoteCache.size) {
+      console.log(`[kfin] Quote response for ${symbol}:`, JSON.stringify(json).slice(0, 300))
+    }
 
-    // Try multiple field names — different proxy versions use different keys
-    const ltp = d.regularMarketPrice
-      ?? d.currentPrice
-      ?? d.price
-      ?? d.lastPrice
-      ?? 0
+    // Proxy wraps in { status, data: {...} } — extract the data object
+    const d = json?.data ?? json
 
-    if (!ltp || !isFinite(ltp) || ltp <= 0) throw new Error(`bad ltp: ${ltp}`)
+    // Deep search for price across all known field names
+    function getNum(...keys: string[]): number {
+      for (const k of keys) {
+        const v = d[k]
+        if (v !== undefined && v !== null && isFinite(Number(v)) && Number(v) > 0) return Number(v)
+      }
+      return 0
+    }
 
-    const prev = d.regularMarketPreviousClose ?? d.previousClose ?? ltp
-    const chg  = d.regularMarketChange ?? d.change ?? (ltp - prev)
-    const chgP = d.regularMarketChangePercent ?? d.changePercent ?? (prev > 0 ? (chg / prev) * 100 : 0)
+    const ltp = getNum(
+      'regularMarketPrice', 'currentPrice', 'price',
+      'lastPrice', 'close', 'previousClose'
+    )
+    if (!ltp) throw new Error(`No price in response. Keys: ${Object.keys(d).join(',')}`)
+
+    const prev  = getNum('regularMarketPreviousClose', 'previousClose', 'prevClose') || ltp
+    const open  = getNum('regularMarketOpen', 'open') || ltp
+    const high  = getNum('regularMarketDayHigh', 'dayHigh', 'high') || ltp
+    const low   = getNum('regularMarketDayLow', 'dayLow', 'low') || ltp
+    const vol   = getNum('regularMarketVolume', 'volume') || 0
+    const chg   = Number(d.regularMarketChange ?? d.change ?? (ltp - prev))
+    const chgP  = Number(d.regularMarketChangePercent ?? d.changePercent ?? (prev > 0 ? ((ltp - prev) / prev) * 100 : 0))
 
     const quote: LiveQuote = {
       symbol,
-      company_name: d.longName || d.shortName || d.companyName || symbol,
+      company_name: String(d.longName || d.shortName || d.companyName || d.name || symbol),
       exchange,
       ltp:          +ltp.toFixed(2),
-      open:         +(d.regularMarketOpen ?? d.open ?? ltp).toFixed(2),
-      high:         +(d.regularMarketDayHigh ?? d.dayHigh ?? ltp).toFixed(2),
-      low:          +(d.regularMarketDayLow  ?? d.dayLow  ?? ltp).toFixed(2),
+      open:         +open.toFixed(2),
+      high:         +high.toFixed(2),
+      low:          +low.toFixed(2),
       prev_close:   +prev.toFixed(2),
       change:       +chg.toFixed(2),
       change_pct:   +chgP.toFixed(4),
-      volume:       d.regularMarketVolume ?? d.volume ?? 0,
-      market_cap:   d.marketCap,
-      pe_ratio:     d.trailingPE,
-      week_52_high: d.fiftyTwoWeekHigh,
-      week_52_low:  d.fiftyTwoWeekLow,
+      volume:       +vol,
+      market_cap:   d.marketCap ? Number(d.marketCap) : undefined,
+      pe_ratio:     d.trailingPE ? Number(d.trailingPE) : undefined,
+      week_52_high: d.fiftyTwoWeekHigh ? Number(d.fiftyTwoWeekHigh) : undefined,
+      week_52_low:  d.fiftyTwoWeekLow  ? Number(d.fiftyTwoWeekLow)  : undefined,
       last_updated: new Date().toISOString(),
     }
 
     quoteCache.set(key, { data: quote, ts: Date.now() })
     return quote
   } catch (e) {
-    console.warn(`Quote failed for ${symbol}:`, e)
-    return hit?.data ?? null  // stale cache > nothing
+    console.warn(`[kfin] Quote failed ${symbol}:`, e)
+    return hit?.data ?? null
   }
 }
 
