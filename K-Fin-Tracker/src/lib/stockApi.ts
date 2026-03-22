@@ -2,7 +2,7 @@ import type { LiveQuote, StockHolding, HealthScore } from '../types'
 
 const API_BASE = import.meta.env.VITE_STOCK_API_BASE || 'https://military-jobye-haiqstudios-14f59639.koyeb.app'
 const cache = new Map<string, { quote: LiveQuote; ts: number }>()
-const TTL = 60_000
+// TTL defined after isMarketOpen() below
 
 export interface SearchResult {
   symbol: string
@@ -40,27 +40,42 @@ const MOCK_PRICES: Record<string, number> = {
   NESTLEIND: 2400, ULTRACEMCO: 9800, SBIN: 820, KOTAKBANK: 1760,
 }
 
+function isMarketOpen(): boolean {
+  const ist = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+  const h = ist.getHours(), m = ist.getMinutes(), d = ist.getDay()
+  const mins = h * 60 + m
+  // NSE trading hours: Mon–Fri 9:15 AM – 3:30 PM IST
+  return d >= 1 && d <= 5 && mins >= 555 && mins <= 930
+}
+
 function mockQuote(symbol: string, exchange: 'NSE' | 'BSE'): LiveQuote {
   const base = MOCK_PRICES[symbol] || 1000
-  const chg = (Math.random() - 0.48) * base * 0.02
+  // Only show non-zero change during market hours
+  // Outside hours: show last known price with 0 change
+  const open = isMarketOpen()
   return {
     symbol, company_name: symbol, exchange,
-    ltp: +(base + chg).toFixed(2),
-    open: +(base - chg * 0.3).toFixed(2),
-    high: +(base + Math.abs(chg) * 1.2).toFixed(2),
-    low:  +(base - Math.abs(chg) * 1.1).toFixed(2),
+    ltp: base,
+    open: base,
+    high: base,
+    low: base,
     prev_close: base,
-    change: +chg.toFixed(2),
-    change_pct: +((chg / base) * 100).toFixed(2),
-    volume: Math.floor(Math.random() * 5_000_000 + 500_000),
+    change: 0,
+    change_pct: 0,
+    volume: 0,
     last_updated: new Date().toISOString(),
-  }
+    _isMock: true,       // flag so UI can show "market closed" indicator
+  } as LiveQuote & { _isMock?: boolean }
 }
 
 export async function fetchLiveQuote(symbol: string, exchange: 'NSE' | 'BSE' = 'NSE'): Promise<LiveQuote> {
   const key = `${symbol}.${exchange}`
   const hit = cache.get(key)
-  if (hit && Date.now() - hit.ts < TTL) return hit.quote
+  // During market hours: 60s cache. Outside hours: 4h cache (prices don't change)
+  const ttl = isMarketOpen() ? 60_000 : 4 * 3600_000
+  if (hit && Date.now() - hit.ts < ttl) return hit.quote
+  // If market is closed and we have ANY cached value, just return it
+  if (!isMarketOpen() && hit) return hit.quote
   try {
     const ticker = exchange === 'BSE' ? `${symbol}.BO` : symbol
     const res = await fetch(`${API_BASE}/stock?symbol=${encodeURIComponent(ticker)}`)
@@ -119,11 +134,14 @@ export async function searchStocks(query: string): Promise<SearchResult[]> {
 
 export function computePortfolioPnL(holdings: StockHolding[], quotes: Map<string, LiveQuote>) {
   let totalInvested = 0, currentValue = 0, dayPnL = 0
+  const marketOpen = isMarketOpen()
   holdings.forEach(h => {
     totalInvested += h.quantity * h.avg_buy_price
     const q = quotes.get(h.symbol)
-    currentValue += h.quantity * (q?.ltp ?? h.avg_buy_price)
-    dayPnL += h.quantity * (q?.change ?? 0)
+    const ltp = q?.ltp ?? h.avg_buy_price
+    currentValue += h.quantity * ltp
+    // Only count day P&L when market is actually open
+    dayPnL += marketOpen ? h.quantity * (q?.change ?? 0) : 0
   })
   const totalPnL = currentValue - totalInvested
   const totalPnLPct = totalInvested > 0 ? (totalPnL / totalInvested) * 100 : 0
@@ -146,3 +164,5 @@ export function computeHealthScore(holdings: StockHolding[], quotes: Map<string,
   const risk_level = topPct > 50 ? 'Very High' : topPct > 35 ? 'High' : topPct > 20 ? 'Moderate' : 'Low'
   return { overall, risk_level, top_holding_pct: topPct, sector_count: sectors.size }
 }
+
+export { isMarketOpen }
