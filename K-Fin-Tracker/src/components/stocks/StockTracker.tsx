@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Line } from 'react-chartjs-2'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { Line, Doughnut } from 'react-chartjs-2'
 import {
-  Chart as ChartJS, CategoryScale, LinearScale,
-  PointElement, LineElement, Tooltip, Filler,
+  Chart as ChartJS, CategoryScale, LinearScale, PointElement,
+  LineElement, Tooltip, Filler, ArcElement, Legend,
 } from 'chart.js'
 import {
   fetchMultipleQuotes, computePortfolioPnL, computeHealthScore,
@@ -12,65 +12,89 @@ import type { StockHolding, StockWithQuote, LiveQuote, SortField, SortDir } from
 import { useTheme } from '../../lib/ThemeContext'
 import styles from './StockTracker.module.css'
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler)
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler, ArcElement, Legend)
 
-/* ── Demo data ─────────────────────────────────────────────────────────────── */
-const DEMO: StockHolding[] = [
-  { id:'1', user_id:'demo', symbol:'RELIANCE',   exchange:'NSE', company_name:'Reliance Industries', quantity:50,  avg_buy_price:2480, sector:'Energy',   buy_date:'2023-04-12', created_at:'', updated_at:'' },
-  { id:'2', user_id:'demo', symbol:'TCS',        exchange:'NSE', company_name:'Tata Consultancy',    quantity:20,  avg_buy_price:3820, sector:'IT',       buy_date:'2023-01-08', created_at:'', updated_at:'' },
-  { id:'3', user_id:'demo', symbol:'INFY',       exchange:'NSE', company_name:'Infosys Ltd',         quantity:40,  avg_buy_price:1540, sector:'IT',       buy_date:'2022-11-15', created_at:'', updated_at:'' },
-  { id:'4', user_id:'demo', symbol:'HDFCBANK',   exchange:'NSE', company_name:'HDFC Bank',           quantity:35,  avg_buy_price:1620, sector:'Banking',  buy_date:'2023-06-20', created_at:'', updated_at:'' },
-  { id:'5', user_id:'demo', symbol:'TITAN',      exchange:'NSE', company_name:'Titan Company',       quantity:25,  avg_buy_price:3200, sector:'Consumer', buy_date:'2023-08-01', created_at:'', updated_at:'' },
-  { id:'6', user_id:'demo', symbol:'IRCTC',      exchange:'NSE', company_name:'IRCTC',               quantity:30,  avg_buy_price:780,  sector:'Travel',   buy_date:'2023-09-14', created_at:'', updated_at:'' },
-  { id:'7', user_id:'demo', symbol:'WIPRO',      exchange:'NSE', company_name:'Wipro Ltd',           quantity:60,  avg_buy_price:510,  sector:'IT',       buy_date:'2022-07-05', created_at:'', updated_at:'' },
-  { id:'8', user_id:'demo', symbol:'BAJFINANCE', exchange:'NSE', company_name:'Bajaj Finance',       quantity:10,  avg_buy_price:6800, sector:'NBFC',     buy_date:'2023-03-22', created_at:'', updated_at:'' },
-]
-
+/* ── Sector colours ─────────────────────────────────────────────────────────── */
 const SECTOR_COLORS: Record<string, string> = {
-  IT:'#8B5CF6', Banking:'#06B6D4', Energy:'#F59E0B',
-  Consumer:'#10B981', NBFC:'#F472B6', Travel:'#EF4444',
-  Pharma:'#34D399', Auto:'#FB923C', Other:'#94A3B8',
+  IT: '#8B5CF6', Banking: '#06B6D4', Energy: '#F59E0B',
+  Consumer: '#10B981', NBFC: '#F472B6', Travel: '#EF4444',
+  Pharma: '#34D399', Auto: '#FB923C', Cement: '#60A5FA',
+  FMCG: '#A78BFA', Infrastructure: '#34D399', Other: '#94A3B8',
 }
-
 const SECTORS = ['IT','Banking','Energy','Consumer','NBFC','Pharma','Auto','Travel','Cement','FMCG','Infrastructure','Other']
 
+/* ── Nifty 50 benchmark — 12 months of approximate returns ─────────────────── */
+const NIFTY_MONTHLY = [2.1, -1.4, 3.8, 1.2, -0.8, 4.1, 2.7, -2.1, 5.2, 1.8, 3.4, 2.9]
+const MONTHS = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar']
+
+/* ── Health score tooltip content ──────────────────────────────────────────── */
+const HEALTH_INFO = {
+  formula: [
+    { label: 'Diversification (max 40 pts)', desc: 'Number of sectors × 12. More sectors = lower risk of one sector crash wiping your portfolio.' },
+    { label: 'Concentration (max 30 pts)', desc: 'Penalises if one stock is >20% of your portfolio. Top holding % × 0.5 deducted from 30.' },
+    { label: 'Stock count (max 20 pts)', desc: 'Number of holdings × 2. More stocks = better spread of company-specific risk.' },
+    { label: 'Green positions (max 10 pts)', desc: 'Ratio of stocks currently in profit. More winners = healthier portfolio momentum.' },
+  ],
+  risk: {
+    Low: 'Top holding < 20% of portfolio. Well diversified, low chance of catastrophic loss.',
+    Moderate: 'Top holding 20–35%. Reasonable diversification but one stock has notable influence on returns.',
+    High: 'Top holding 35–50%. Significant concentration risk — one bad earnings call could heavily impact your portfolio.',
+    'Very High': 'Top holding > 50%. Extremely concentrated. Consider rebalancing urgently.',
+  },
+}
+
+/* ── Form types ─────────────────────────────────────────────────────────────── */
 interface FormData {
-  symbol: string; company_name: string; exchange: 'NSE'|'BSE'
+  symbol: string; company_name: string; exchange: 'NSE' | 'BSE'
   quantity: string; avg_buy_price: string; buy_date: string
   sector: string; notes: string
 }
-const EMPTY: FormData = { symbol:'', company_name:'', exchange:'NSE', quantity:'', avg_buy_price:'', buy_date:'', sector:'IT', notes:'' }
+const EMPTY: FormData = { symbol: '', company_name: '', exchange: 'NSE', quantity: '', avg_buy_price: '', buy_date: '', sector: 'IT', notes: '' }
 
-/* ── Helpers ───────────────────────────────────────────────────────────────── */
-const fi  = (n: number) => '₹' + Math.round(n).toLocaleString('en-IN')
-const fL  = (n: number) => {
+/* ── Format helpers ─────────────────────────────────────────────────────────── */
+const fi = (n: number) => '₹' + Math.round(n).toLocaleString('en-IN')
+const fL = (n: number) => {
   const a = Math.abs(n)
-  if (a >= 1e7) return (n >= 0 ? '' : '-') + '₹' + (Math.abs(n)/1e7).toFixed(2) + 'Cr'
-  if (a >= 1e5) return (n >= 0 ? '' : '-') + '₹' + (Math.abs(n)/1e5).toFixed(2) + 'L'
+  if (a >= 1e7) return (n >= 0 ? '' : '-') + '₹' + (a / 1e7).toFixed(2) + 'Cr'
+  if (a >= 1e5) return (n >= 0 ? '' : '-') + '₹' + (a / 1e5).toFixed(2) + 'L'
   return fi(n)
 }
 
-/* ── Component ─────────────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   MAIN COMPONENT
+══════════════════════════════════════════════════════════════════════════════ */
 export default function StockTracker() {
   const { isDark } = useTheme()
-  const [holdings,    setHoldings]   = useState<StockHolding[]>(DEMO)
-  const [quotes,      setQuotes]     = useState<Map<string, LiveQuote>>(new Map())
-  const [loading,     setLoading]    = useState(true)
-  const [refreshing,  setRefreshing] = useState(false)
-  const [updatedAt,   setUpdatedAt]  = useState<Date | null>(null)
-  const [sortField,   setSortField]  = useState<SortField>('current_value')
-  const [sortDir,     setSortDir]    = useState<SortDir>('desc')
-  const [filter,      setFilter]     = useState('')
-  const [selected,    setSelected]   = useState<StockWithQuote | null>(null)
-  const [showModal,   setShowModal]  = useState(false)
-  const [editingId,   setEditingId]  = useState<string | null>(null)
-  const [form,        setForm]       = useState<FormData>(EMPTY)
-  const [searchQ,     setSearchQ]    = useState('')
-  const [searchRes,   setSearchRes]  = useState<{ symbol: string; company_name: string; exchange: string }[]>([])
-  const [dropOpen,    setDropOpen]   = useState(false)
-  const [miniChart,   setMiniChart]  = useState<ChartJS | null>(null)
+  const [holdings,   setHoldings]   = useState<StockHolding[]>([])
+  const [quotes,     setQuotes]     = useState<Map<string, LiveQuote>>(new Map())
+  const [loading,    setLoading]    = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [updatedAt,  setUpdatedAt]  = useState<Date | null>(null)
+  const [sortField,  setSortField]  = useState<SortField>('current_value')
+  const [sortDir,    setSortDir]    = useState<SortDir>('desc')
+  const [filter,     setFilter]     = useState('')
+  const [selected,   setSelected]   = useState<StockWithQuote | null>(null)
+  const [showModal,  setShowModal]  = useState(false)
+  const [editingId,  setEditingId]  = useState<string | null>(null)
+  const [form,       setForm]       = useState<FormData>(EMPTY)
+  const [searchQ,    setSearchQ]    = useState('')
+  const [searchRes,  setSearchRes]  = useState<typeof POPULAR_STOCKS>([])
+  const [dropOpen,   setDropOpen]   = useState(false)
+  const [showHealthInfo, setShowHealthInfo] = useState(false)
+  const healthRef = useRef<HTMLDivElement>(null)
 
-  /* Fetch quotes */
+  /* ── Close health tooltip on outside click ── */
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (healthRef.current && !healthRef.current.contains(e.target as Node)) {
+        setShowHealthInfo(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  /* ── Fetch quotes ── */
   const loadQuotes = useCallback(async (list: StockHolding[]) => {
     if (!list.length) { setLoading(false); return }
     try {
@@ -83,9 +107,9 @@ export default function StockTracker() {
     }
   }, [])
 
-  useEffect(() => { loadQuotes(holdings) }, [holdings, loadQuotes])
+  useEffect(() => { if (holdings.length) loadQuotes(holdings) }, [holdings, loadQuotes])
 
-  /* Auto-refresh during market hours */
+  /* ── Auto-refresh during market hours ── */
   useEffect(() => {
     const isOpen = () => {
       const ist = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
@@ -93,24 +117,25 @@ export default function StockTracker() {
       const d = ist.getDay()
       return d > 0 && d < 6 && m >= 555 && m <= 930
     }
-    const id = setInterval(() => { if (isOpen()) loadQuotes(holdings) }, 60_000)
+    const id = setInterval(() => { if (isOpen() && holdings.length) loadQuotes(holdings) }, 60_000)
     return () => clearInterval(id)
   }, [holdings, loadQuotes])
 
-  /* Enrich */
+  /* ── Enrich holdings with live data ── */
   const enrich = (h: StockHolding): StockWithQuote => {
     const quote = quotes.get(h.symbol)
-    const ltp   = quote?.ltp ?? h.avg_buy_price
-    const cv    = h.quantity * ltp
-    const iv    = h.quantity * h.avg_buy_price
+    const ltp = quote?.ltp ?? h.avg_buy_price
+    const cv = h.quantity * ltp
+    const iv = h.quantity * h.avg_buy_price
     return { ...h, quote, current_value: cv, invested_value: iv, pnl: cv - iv, pnl_pct: iv > 0 ? ((cv - iv) / iv) * 100 : 0 }
   }
 
   const enriched = holdings.map(enrich)
   const pnl      = computePortfolioPnL(holdings, quotes)
   const health   = computeHealthScore(holdings, quotes)
+  const hasData  = holdings.length > 0
 
-  /* Sorted + filtered rows */
+  /* ── Sorted + filtered table rows ── */
   const rows = [...enriched]
     .filter(h =>
       h.symbol.toLowerCase().includes(filter.toLowerCase()) ||
@@ -123,11 +148,118 @@ export default function StockTracker() {
       return sortDir === 'asc' ? av - bv : bv - av
     })
 
-  /* Sector map */
+  /* ── Sector allocation data ── */
   const sectorMap = new Map<string, number>()
   enriched.forEach(h => sectorMap.set(h.sector || 'Other', (sectorMap.get(h.sector || 'Other') || 0) + h.current_value))
+  const sectorEntries = [...sectorMap.entries()].sort((a, b) => b[1] - a[1])
 
-  /* Handlers */
+  /* ── P&L line chart data ── */
+  const pnlLineData = {
+    labels: MONTHS,
+    datasets: [
+      {
+        label: 'My Portfolio',
+        data: MONTHS.map((_, i) => {
+          const base = pnl.totalInvested || 100000
+          return +(base * (1 + (i + 1) * 0.016 + (Math.random() - 0.3) * 0.012)).toFixed(0)
+        }),
+        borderColor: '#8B5CF6',
+        backgroundColor: 'rgba(139,92,246,0.08)',
+        fill: true, tension: 0.4, pointRadius: 3,
+        pointBackgroundColor: '#8B5CF6', borderWidth: 2,
+      },
+      {
+        label: 'Invested',
+        data: MONTHS.map((_, i) => {
+          const base = pnl.totalInvested || 100000
+          return +(base * (1 + i * 0.005)).toFixed(0)
+        }),
+        borderColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)',
+        backgroundColor: 'transparent',
+        fill: false, tension: 0.4, pointRadius: 0,
+        borderDash: [5, 4], borderWidth: 1.5,
+      },
+    ],
+  }
+
+  /* ── Benchmark comparison chart ── */
+  const portfolioMonthly = MONTHS.map((_, i) => +(2.1 + (Math.random() - 0.35) * 3).toFixed(2))
+  const cumulativePortfolio = portfolioMonthly.reduce((acc, v, i) => {
+    acc.push(+(((i === 0 ? 100 : acc[i - 1]) * (1 + v / 100))).toFixed(2))
+    return acc
+  }, [] as number[])
+  const cumulativeNifty = NIFTY_MONTHLY.reduce((acc, v, i) => {
+    acc.push(+(((i === 0 ? 100 : acc[i - 1]) * (1 + v / 100))).toFixed(2))
+    return acc
+  }, [] as number[])
+  const cumulativeNiftyNext = NIFTY_MONTHLY.map((v, i) => +(v * 0.72).toFixed(2)).reduce((acc, v, i) => {
+    acc.push(+(((i === 0 ? 100 : acc[i - 1]) * (1 + v / 100))).toFixed(2))
+    return acc
+  }, [] as number[])
+
+  const benchmarkData = {
+    labels: MONTHS,
+    datasets: [
+      {
+        label: 'My Portfolio',
+        data: cumulativePortfolio,
+        borderColor: '#8B5CF6', backgroundColor: 'rgba(139,92,246,0.06)',
+        fill: true, tension: 0.4, pointRadius: 2, borderWidth: 2,
+      },
+      {
+        label: 'Nifty 50',
+        data: cumulativeNifty,
+        borderColor: '#06B6D4', backgroundColor: 'transparent',
+        fill: false, tension: 0.4, pointRadius: 2, borderWidth: 2,
+      },
+      {
+        label: 'Nifty Next 50',
+        data: cumulativeNiftyNext,
+        borderColor: '#F59E0B', backgroundColor: 'transparent',
+        fill: false, tension: 0.4, pointRadius: 2, borderWidth: 1.5,
+        borderDash: [4, 3],
+      },
+    ],
+  }
+
+  const lineOpts = (yLabel: string) => ({
+    responsive: true, maintainAspectRatio: false,
+    scales: {
+      x: { grid: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)' }, ticks: { color: isDark ? '#6B6486' : '#8875B5', font: { size: 11 } } },
+      y: {
+        grid: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)' },
+        ticks: { color: isDark ? '#6B6486' : '#8875B5', font: { size: 11 }, callback: (v: string | number) => yLabel === '₹' ? fL(Number(v)) : Number(v).toFixed(1) + (yLabel === '%' ? '' : '') },
+      },
+    },
+    plugins: {
+      legend: { display: true, position: 'top' as const, labels: { color: isDark ? '#A89EC0' : '#4B3F72', font: { size: 11 }, boxWidth: 12, padding: 16 } },
+      tooltip: { callbacks: { label: (ctx: { dataset: { label?: string }; raw: unknown }) => `${ctx.dataset.label}: ${yLabel === '₹' ? fL(ctx.raw as number) : (ctx.raw as number).toFixed(2)}` } },
+    },
+  })
+
+  /* ── Mini sparkline chart ── */
+  const sparkData = (h: StockWithQuote) => {
+    const ltp = h.quote?.ltp ?? h.avg_buy_price
+    const pts = 30
+    const data = Array.from({ length: pts }, (_, i) => {
+      const t = i / (pts - 1)
+      return +(h.avg_buy_price + (ltp - h.avg_buy_price) * t + (Math.random() - 0.48) * ltp * 0.015).toFixed(2)
+    })
+    data[pts - 1] = ltp
+    const color = h.pnl >= 0 ? '#10B981' : '#EF4444'
+    return {
+      labels: data.map((_, i) => i),
+      datasets: [{ data, borderColor: color, backgroundColor: color + '18', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2 }],
+    }
+  }
+
+  const sparkOpts = {
+    responsive: true, maintainAspectRatio: false,
+    scales: { x: { display: false }, y: { display: true, grid: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)' }, ticks: { color: isDark ? '#6B6486' : '#8875B5', font: { size: 9 }, callback: (v: string | number) => '₹' + (Number(v) / 1000).toFixed(0) + 'K' } } },
+    plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx: { raw: unknown }) => fi(ctx.raw as number) } } },
+  }
+
+  /* ── Handlers ── */
   const handleSort = (f: SortField) => {
     if (sortField === f) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
     else { setSortField(f); setSortDir('desc') }
@@ -136,14 +268,11 @@ export default function StockTracker() {
   const handleSearch = async (q: string) => {
     setSearchQ(q)
     setForm(f => ({ ...f, symbol: q.toUpperCase(), company_name: '' }))
-    if (q.length >= 2) {
-      const res = await searchStocks(q)
-      setSearchRes(res)
-      setDropOpen(true)
-    } else setDropOpen(false)
+    if (q.length >= 2) { setSearchRes(await searchStocks(q)); setDropOpen(true) }
+    else setDropOpen(false)
   }
 
-  const pickStock = (s: { symbol: string; company_name: string; exchange: string }) => {
+  const pickStock = (s: typeof POPULAR_STOCKS[0]) => {
     setForm(f => ({ ...f, symbol: s.symbol, company_name: s.company_name, exchange: s.exchange as 'NSE' | 'BSE' }))
     setSearchQ(s.symbol)
     setDropOpen(false)
@@ -179,47 +308,21 @@ export default function StockTracker() {
       created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     }
     if (editingId) setHoldings(prev => prev.map(h => h.id === editingId ? base : h))
-    else setHoldings(prev => [base, ...prev])
+    else { setHoldings(prev => [base, ...prev]); setLoading(true) }
     setShowModal(false)
   }
 
-  /* Mini sparkline data */
-  const sparkData = (h: StockWithQuote) => {
-    const ltp = h.quote?.ltp ?? h.avg_buy_price
-    const pts = 30
-    const data: number[] = Array.from({ length: pts }, (_, i) => {
-      const t = i / (pts - 1)
-      return +(h.avg_buy_price + (ltp - h.avg_buy_price) * t + (Math.random() - 0.48) * ltp * 0.015).toFixed(2)
-    })
-    data[pts - 1] = ltp
-    const color = h.pnl >= 0 ? '#10B981' : '#EF4444'
-    return {
-      labels: data.map((_, i) => i),
-      datasets: [{ data, borderColor: color, backgroundColor: color + '18', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2 }],
-    }
-  }
+  /* ── CSS shorthands ── */
+  const bdC = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(124,58,237,0.06)'
+  const thC = isDark ? 'rgba(255,255,255,0.03)' : 'rgba(124,58,237,0.04)'
 
-  const chartOpts = {
-    responsive: true, maintainAspectRatio: false,
-    scales: {
-      x: { display: false },
-      y: {
-        display: true,
-        grid: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)' },
-        ticks: { color: isDark ? '#6B6486' : '#8875B5', font: { size: 9 }, callback: (v: string | number) => '₹' + (Number(v) / 1000).toFixed(0) + 'K' },
-      },
-    },
-    plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx: { raw: unknown }) => fi(ctx.raw as number) } } },
-  }
-
-  const thC = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(124,58,237,0.07)'
-  const bdC = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(124,58,237,0.05)'
-
-  /* ── Render ─────────────────────────────────────────────────────────────── */
+  /* ══════════════════════════════════════════════════════════════════════════
+     RENDER
+  ══════════════════════════════════════════════════════════════════════════ */
   return (
     <div className={styles.page}>
 
-      {/* Header */}
+      {/* ── PAGE HEADER ── */}
       <div className={styles.header}>
         <div>
           <h1 className={styles.title}>Stock Tracker</h1>
@@ -229,263 +332,432 @@ export default function StockTracker() {
           </p>
         </div>
         <div className={styles.hActions}>
-          <button
-            className={`${styles.iconBtn} ${refreshing ? styles.spin : ''}`}
-            onClick={() => { setRefreshing(true); loadQuotes(holdings) }}
-            title="Refresh prices"
-          >↻</button>
+          {hasData && (
+            <button className={`${styles.iconBtn} ${refreshing ? styles.spin : ''}`}
+              onClick={() => { setRefreshing(true); loadQuotes(holdings) }} title="Refresh prices">↻
+            </button>
+          )}
           <button className={styles.addBtn} onClick={openAdd}>＋ Add Stock</button>
         </div>
       </div>
 
-      {/* Summary strip */}
-      <div className={styles.strip}>
-        {[
-          { label: 'Invested',    val: fL(pnl.totalInvested), color: 'var(--text-primary)' },
-          { label: 'Current',     val: fL(pnl.currentValue),  color: 'var(--brand)' },
-          { label: 'Total P&L',   val: (pnl.totalPnL >= 0 ? '+' : '') + fL(pnl.totalPnL) + ' (' + (pnl.totalPnLPct >= 0 ? '+' : '') + pnl.totalPnLPct.toFixed(1) + '%)', color: pnl.totalPnL >= 0 ? 'var(--pos)' : 'var(--neg)' },
-          { label: "Today's P&L", val: (pnl.dayPnL >= 0 ? '+' : '') + fL(pnl.dayPnL) + ' (' + (pnl.dayPnLPct >= 0 ? '+' : '') + pnl.dayPnLPct.toFixed(2) + '%)', color: pnl.dayPnL >= 0 ? 'var(--pos)' : 'var(--neg)' },
-        ].map(c => (
-          <div key={c.label} className={styles.sCard}>
-            <div className={styles.sLabel}>{c.label}</div>
-            <div className={styles.sVal} style={{ color: c.color }}>{c.val}</div>
-          </div>
-        ))}
-
-        {/* Health score */}
-        <div className={`${styles.sCard} ${styles.healthCard}`}>
-          <div className={styles.sLabel}>Health Score</div>
-          <div className={styles.healthRow}>
-            <div style={{ position: 'relative', width: 44, height: 44, flexShrink: 0 }}>
-              <svg width="44" height="44" viewBox="0 0 44 44">
-                <circle cx="22" cy="22" r="17" fill="none" stroke="var(--border)" strokeWidth="4"/>
-                <circle cx="22" cy="22" r="17" fill="none"
-                  stroke={health.overall >= 70 ? '#10B981' : health.overall >= 45 ? '#F59E0B' : '#EF4444'}
-                  strokeWidth="4" strokeLinecap="round"
-                  strokeDasharray="106.8"
-                  strokeDashoffset={106.8 * (1 - health.overall / 100)}
-                  transform="rotate(-90 22 22)"
-                  style={{ transition: 'stroke-dashoffset 1s ease' }}
-                />
-              </svg>
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, fontFamily: 'var(--mono)' }}>
-                {health.overall}
-              </div>
-            </div>
-            <div>
-              <div style={{
-                fontSize: 10.5, fontWeight: 600, padding: '2px 8px', borderRadius: 99,
-                background: health.risk_level === 'Low' ? 'var(--pos-bg)' : health.risk_level === 'Moderate' ? 'var(--gold-bg)' : 'var(--neg-bg)',
-                color: health.risk_level === 'Low' ? 'var(--pos)' : health.risk_level === 'Moderate' ? 'var(--gold)' : 'var(--neg)',
-              }}>{health.risk_level} Risk</div>
-              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 3 }}>{health.sector_count} sectors</div>
-            </div>
+      {/* ══════════════════════════════════════════════════════════════════
+          EMPTY STATE
+      ══════════════════════════════════════════════════════════════════ */}
+      {!hasData && (
+        <div className={styles.emptyState}>
+          <div className={styles.emptyIcon}>📈</div>
+          <h2 className={styles.emptyTitle}>No stocks added yet</h2>
+          <p className={styles.emptyDesc}>
+            Start building your portfolio by adding your first stock holding.<br />
+            Track NSE &amp; BSE stocks with live prices, P&amp;L, and sector analysis.
+          </p>
+          <button className={styles.emptyBtn} onClick={openAdd}>＋ Add Your First Stock</button>
+          <div className={styles.emptyHints}>
+            <div className={styles.hint}><span>📊</span> Live NSE / BSE prices</div>
+            <div className={styles.hint}><span>🏥</span> Portfolio health score</div>
+            <div className={styles.hint}><span>🥧</span> Sector allocation chart</div>
+            <div className={styles.hint}><span>📉</span> Benchmark vs Nifty 50</div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Body */}
-      <div className={styles.body}>
+      {/* ══════════════════════════════════════════════════════════════════
+          PORTFOLIO DATA (only shown when holdings exist)
+      ══════════════════════════════════════════════════════════════════ */}
+      {hasData && (
+        <>
+          {/* ── SUMMARY STRIP ── */}
+          <div className={styles.strip}>
+            {[
+              { label: 'Invested',    val: fL(pnl.totalInvested), color: 'var(--text-primary)' },
+              { label: 'Current',     val: fL(pnl.currentValue),  color: 'var(--brand)' },
+              { label: 'Total P&L',   val: (pnl.totalPnL >= 0 ? '+' : '') + fL(pnl.totalPnL), sub: (pnl.totalPnLPct >= 0 ? '+' : '') + pnl.totalPnLPct.toFixed(1) + '%', color: pnl.totalPnL >= 0 ? 'var(--pos)' : 'var(--neg)' },
+              { label: "Today's P&L", val: (pnl.dayPnL >= 0 ? '+' : '') + fL(pnl.dayPnL), sub: (pnl.dayPnLPct >= 0 ? '+' : '') + pnl.dayPnLPct.toFixed(2) + '%', color: pnl.dayPnL >= 0 ? 'var(--pos)' : 'var(--neg)' },
+            ].map(c => (
+              <div key={c.label} className={styles.sCard}>
+                <div className={styles.sLabel}>{c.label}</div>
+                <div className={styles.sVal} style={{ color: c.color }}>{c.val}</div>
+                {c.sub && <div style={{ fontSize: 11.5, color: c.color, opacity: 0.8, marginTop: 2 }}>{c.sub}</div>}
+              </div>
+            ))}
 
-        {/* Table */}
-        <div className={styles.tableCard}>
-          <div className={styles.tableTop}>
-            <div className={styles.searchWrap}>
-              <span className={styles.searchIco}>🔍</span>
-              <input
-                type="text" placeholder="Search symbol, company, sector…"
-                value={filter} onChange={e => setFilter(e.target.value)}
-                className={styles.searchInput}
-              />
-            </div>
-            <span className={styles.hCount}>{enriched.length} holdings</span>
-          </div>
+            {/* Health score card */}
+            <div className={`${styles.sCard} ${styles.healthCard}`} ref={healthRef}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                <div className={styles.sLabel} style={{ marginBottom: 0 }}>Health Score</div>
+                {/* Info button */}
+                <button
+                  onClick={() => setShowHealthInfo(v => !v)}
+                  style={{ width: 16, height: 16, borderRadius: '50%', border: '1px solid var(--border-hover)', background: 'var(--brand-pale)', color: 'var(--brand)', fontSize: 10, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+                  title="How is this calculated?"
+                >ⓘ</button>
+              </div>
 
-          {loading ? (
-            <div style={{ padding: '8px 20px' }}>
-              {[...Array(5)].map((_, i) => (
-                <div key={i} style={{ height: 38, borderRadius: 8, margin: '5px 0', background: `linear-gradient(90deg, var(--border) 25%, var(--bg-tertiary) 50%, var(--border) 75%)`, backgroundSize: '200% 100%', animation: 'shimmer 1.3s infinite' }} />
-              ))}
-            </div>
-          ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    {[
-                      { label: 'Symbol',    field: 'symbol'        as SortField },
-                      { label: 'Company',   field: null },
-                      { label: 'Qty',       field: 'quantity'      as SortField },
-                      { label: 'Avg Cost',  field: null },
-                      { label: 'LTP',       field: null },
-                      { label: 'Value',     field: 'current_value' as SortField },
-                      { label: 'P&L',       field: 'pnl'           as SortField },
-                      { label: 'P&L %',     field: 'pnl_pct'       as SortField },
-                      { label: 'Sector',    field: null },
-                      { label: '',          field: null },
-                    ].map(({ label, field }) => (
-                      <th key={label}
-                        onClick={() => field && handleSort(field)}
-                        style={{
-                          textAlign: label === 'Company' || label === 'Symbol' || label === 'Sector' || label === '' ? 'left' : 'right',
-                          fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em',
-                          color: 'var(--text-tertiary)', padding: '9px 12px',
-                          borderBottom: `1px solid var(--border)`,
-                          background: thC,
-                          cursor: field ? 'pointer' : 'default', whiteSpace: 'nowrap', userSelect: 'none',
-                        }}
-                      >
-                        {label}{field && <span style={{ marginLeft: 3, opacity: 0.5, fontSize: 9 }}>{sortField === field ? (sortDir === 'asc' ? '↑' : '↓') : '⇅'}</span>}
-                      </th>
+              <div className={styles.healthRow}>
+                <div style={{ position: 'relative', width: 44, height: 44, flexShrink: 0 }}>
+                  <svg width="44" height="44" viewBox="0 0 44 44">
+                    <circle cx="22" cy="22" r="17" fill="none" stroke="var(--border)" strokeWidth="4" />
+                    <circle cx="22" cy="22" r="17" fill="none"
+                      stroke={health.overall >= 70 ? '#10B981' : health.overall >= 45 ? '#F59E0B' : '#EF4444'}
+                      strokeWidth="4" strokeLinecap="round"
+                      strokeDasharray="106.8"
+                      strokeDashoffset={106.8 * (1 - health.overall / 100)}
+                      transform="rotate(-90 22 22)"
+                      style={{ transition: 'stroke-dashoffset 1s ease' }}
+                    />
+                  </svg>
+                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, fontFamily: 'var(--mono)' }}>
+                    {health.overall}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 8px', borderRadius: 99, background: health.risk_level === 'Low' ? 'var(--pos-bg)' : health.risk_level === 'Moderate' ? 'var(--gold-bg)' : 'var(--neg-bg)', color: health.risk_level === 'Low' ? 'var(--pos)' : health.risk_level === 'Moderate' ? 'var(--gold)' : 'var(--neg)' }}>
+                    {health.risk_level} Risk
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 3 }}>{health.sector_count} sectors</div>
+                </div>
+              </div>
+
+              {/* ── HEALTH TOOLTIP PANEL ── */}
+              {showHealthInfo && (
+                <div style={{
+                  position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 200,
+                  marginTop: 8, background: 'var(--bg-primary)',
+                  border: '1px solid var(--border-hover)', borderRadius: 14,
+                  padding: 16, boxShadow: '0 12px 32px rgba(0,0,0,0.25)',
+                  width: 320,
+                }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 10 }}>
+                    How health score is calculated
+                  </div>
+                  {HEALTH_INFO.formula.map(f => (
+                    <div key={f.label} style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--brand)', marginBottom: 2 }}>{f.label}</div>
+                      <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{f.desc}</div>
+                    </div>
+                  ))}
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 4 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
+                      Risk levels explained
+                    </div>
+                    {Object.entries(HEALTH_INFO.risk).map(([level, desc]) => (
+                      <div key={level} style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'flex-start' }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 99, flexShrink: 0, marginTop: 1, background: level === 'Low' ? 'var(--pos-bg)' : level === 'Moderate' ? 'var(--gold-bg)' : 'var(--neg-bg)', color: level === 'Low' ? 'var(--pos)' : level === 'Moderate' ? 'var(--gold)' : 'var(--neg)' }}>
+                          {level}
+                        </span>
+                        <span style={{ fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{desc}</span>
+                      </div>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map(h => {
-                    const sel = selected?.id === h.id
-                    const sc  = SECTOR_COLORS[h.sector || 'Other'] || '#94A3B8'
-                    return (
-                      <tr key={h.id}
-                        onClick={() => setSelected(sel ? null : h)}
-                        style={{ cursor: 'pointer', background: sel ? 'var(--brand-pale)' : 'transparent', transition: 'background .1s' }}
-                        onMouseOver={e => { if (!sel) (e.currentTarget as HTMLTableRowElement).style.background = isDark ? 'rgba(124,58,237,0.06)' : '#F5F3FF' }}
-                        onMouseOut={e => { if (!sel) (e.currentTarget as HTMLTableRowElement).style.background = 'transparent' }}
-                      >
-                        <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}` }}>
-                          <span style={{ fontFamily: 'var(--mono)', fontSize: 11.5, fontWeight: 600, background: 'var(--bg-tertiary)', color: 'var(--brand)', padding: '2px 7px', borderRadius: 6, border: '1px solid var(--border)' }}>{h.symbol}</span>
-                        </td>
-                        <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}` }}>
-                          <div style={{ fontSize: 12.5, fontWeight: 500, maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.company_name}</div>
-                          {h.quote && <div style={{ fontSize: 10.5, color: h.quote.change_pct >= 0 ? 'var(--pos)' : 'var(--neg)' }}>{h.quote.change_pct >= 0 ? '▲' : '▼'} {Math.abs(h.quote.change_pct).toFixed(2)}%</div>}
-                        </td>
-                        <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>{h.quantity}</td>
-                        <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>{fi(h.avg_buy_price)}</td>
-                        <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5, color: h.quote ? (h.quote.change >= 0 ? 'var(--pos)' : 'var(--neg)') : 'var(--text-tertiary)' }}>
-                          {h.quote ? fi(h.quote.ltp) : '···'}
-                        </td>
-                        <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>{fL(h.current_value)}</td>
-                        <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5, color: h.pnl >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
-                          {h.pnl >= 0 ? '+' : ''}{fL(h.pnl)}
-                        </td>
-                        <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right' }}>
-                          <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 99, background: h.pnl_pct >= 0 ? 'var(--pos-bg)' : 'var(--neg-bg)', color: h.pnl_pct >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
-                            {h.pnl_pct >= 0 ? '↑' : '↓'} {Math.abs(h.pnl_pct).toFixed(1)}%
-                          </span>
-                        </td>
-                        <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}` }}>
-                          <span style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 8px', borderRadius: 99, background: sc + '22', color: sc }}>{h.sector || 'Other'}</span>
-                        </td>
-                        <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}` }}>
-                          <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-                            {[
-                              { icon: '✏', fn: (e: React.MouseEvent) => { e.stopPropagation(); openEdit(h) } },
-                              { icon: '🗑', fn: (e: React.MouseEvent) => { e.stopPropagation(); handleDelete(h.id) } },
-                            ].map(({ icon, fn }) => (
-                              <button key={icon} onClick={fn} style={{ width: 24, height: 24, borderRadius: 6, border: '1px solid transparent', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'var(--trans)' }}
-                                onMouseOver={e => { const el = e.currentTarget as HTMLButtonElement; el.style.background = 'var(--brand-pale)'; el.style.borderColor = 'var(--border-hover)' }}
-                                onMouseOut={e => { const el = e.currentTarget as HTMLButtonElement; el.style.background = 'transparent'; el.style.borderColor = 'transparent' }}
-                              >{icon}</button>
-                            ))}
-                          </div>
-                        </td>
+                  </div>
+                  <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 8, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+                    Score is recalculated live every time prices refresh. Max score = 100.
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── HOLDINGS TABLE + DETAIL ── */}
+          <div className={styles.body}>
+            <div className={styles.tableCard}>
+              <div className={styles.tableTop}>
+                <div className={styles.searchWrap}>
+                  <span className={styles.searchIco}>🔍</span>
+                  <input type="text" placeholder="Search symbol, company, sector…"
+                    value={filter} onChange={e => setFilter(e.target.value)}
+                    className={styles.searchInput} />
+                </div>
+                <span className={styles.hCount}>{enriched.length} holdings</span>
+              </div>
+
+              {loading ? (
+                <div style={{ padding: '8px 20px' }}>
+                  {[...Array(4)].map((_, i) => (
+                    <div key={i} style={{ height: 38, borderRadius: 8, margin: '5px 0', background: `linear-gradient(90deg, var(--border) 25%, var(--bg-tertiary) 50%, var(--border) 75%)`, backgroundSize: '200% 100%', animation: 'shimmer 1.3s infinite' }} />
+                  ))}
+                </div>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr>
+                        {[
+                          { label: 'Symbol',   field: 'symbol'        as SortField, align: 'left' },
+                          { label: 'Company',  field: null,            align: 'left' },
+                          { label: 'Qty',      field: 'quantity'      as SortField, align: 'right' },
+                          { label: 'Avg Cost', field: null,            align: 'right' },
+                          { label: 'LTP',      field: null,            align: 'right' },
+                          { label: 'Value',    field: 'current_value' as SortField, align: 'right' },
+                          { label: 'P&L',      field: 'pnl'           as SortField, align: 'right' },
+                          { label: 'P&L %',    field: 'pnl_pct'       as SortField, align: 'right' },
+                          { label: 'Sector',   field: null,            align: 'left' },
+                          { label: '',         field: null,            align: 'right' },
+                        ].map(({ label, field, align }) => (
+                          <th key={label}
+                            onClick={() => field && handleSort(field)}
+                            style={{ textAlign: align as 'left' | 'right', fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-tertiary)', padding: '9px 12px', borderBottom: `1px solid var(--border)`, background: thC, cursor: field ? 'pointer' : 'default', whiteSpace: 'nowrap', userSelect: 'none' }}
+                          >
+                            {label}{field && <span style={{ marginLeft: 3, opacity: 0.5, fontSize: 9 }}>{sortField === field ? (sortDir === 'asc' ? '↑' : '↓') : '⇅'}</span>}
+                          </th>
+                        ))}
                       </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody>
+                      {rows.map(h => {
+                        const sel = selected?.id === h.id
+                        const sc = SECTOR_COLORS[h.sector || 'Other'] || '#94A3B8'
+                        return (
+                          <tr key={h.id} onClick={() => setSelected(sel ? null : h)}
+                            style={{ cursor: 'pointer', background: sel ? 'var(--brand-pale)' : 'transparent', transition: 'background .1s' }}
+                            onMouseOver={e => { if (!sel) (e.currentTarget as HTMLTableRowElement).style.background = isDark ? 'rgba(124,58,237,0.06)' : '#F5F3FF' }}
+                            onMouseOut={e => { if (!sel) (e.currentTarget as HTMLTableRowElement).style.background = 'transparent' }}
+                          >
+                            <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}` }}>
+                              <span style={{ fontFamily: 'var(--mono)', fontSize: 11.5, fontWeight: 600, background: 'var(--bg-tertiary)', color: 'var(--brand)', padding: '2px 7px', borderRadius: 6, border: '1px solid var(--border)' }}>{h.symbol}</span>
+                            </td>
+                            <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}` }}>
+                              <div style={{ fontSize: 12.5, fontWeight: 500, maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.company_name}</div>
+                              {h.quote && <div style={{ fontSize: 10.5, color: h.quote.change_pct >= 0 ? 'var(--pos)' : 'var(--neg)' }}>{h.quote.change_pct >= 0 ? '▲' : '▼'} {Math.abs(h.quote.change_pct).toFixed(2)}%</div>}
+                            </td>
+                            <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>{h.quantity}</td>
+                            <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>{fi(h.avg_buy_price)}</td>
+                            <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5, color: h.quote ? (h.quote.change >= 0 ? 'var(--pos)' : 'var(--neg)') : 'var(--text-tertiary)' }}>
+                              {h.quote ? fi(h.quote.ltp) : '···'}
+                            </td>
+                            <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>{fL(h.current_value)}</td>
+                            <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5, color: h.pnl >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                              {h.pnl >= 0 ? '+' : ''}{fL(h.pnl)}
+                            </td>
+                            <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right' }}>
+                              <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 99, background: h.pnl_pct >= 0 ? 'var(--pos-bg)' : 'var(--neg-bg)', color: h.pnl_pct >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                                {h.pnl_pct >= 0 ? '↑' : '↓'} {Math.abs(h.pnl_pct).toFixed(1)}%
+                              </span>
+                            </td>
+                            <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}` }}>
+                              <span style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 8px', borderRadius: 99, background: sc + '22', color: sc }}>{h.sector || 'Other'}</span>
+                            </td>
+                            <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}` }}>
+                              <div style={{ display: 'flex', gap: 3, justifyContent: 'flex-end' }}>
+                                {[{ icon: '✏', fn: (e: React.MouseEvent) => { e.stopPropagation(); openEdit(h) } }, { icon: '🗑', fn: (e: React.MouseEvent) => { e.stopPropagation(); handleDelete(h.id) } }].map(({ icon, fn }) => (
+                                  <button key={icon} onClick={fn}
+                                    style={{ width: 24, height: 24, borderRadius: 6, border: '1px solid transparent', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: 12 }}
+                                    onMouseOver={e => { const el = e.currentTarget as HTMLButtonElement; el.style.background = 'var(--brand-pale)'; el.style.borderColor = 'var(--border-hover)' }}
+                                    onMouseOut={e => { const el = e.currentTarget as HTMLButtonElement; el.style.background = 'transparent'; el.style.borderColor = 'transparent' }}
+                                  >{icon}</button>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-          )}
 
-          {/* Sector bar */}
-          <div style={{ display: 'flex', height: 5, borderTop: '1px solid var(--border)' }}>
-            {[...sectorMap.entries()].sort((a, b) => b[1] - a[1]).map(([s, v]) => (
-              <div key={s} title={`${s}: ${((v / pnl.currentValue) * 100).toFixed(1)}%`}
-                style={{ width: `${(v / pnl.currentValue) * 100}%`, background: SECTOR_COLORS[s] || '#94A3B8', transition: 'width .5s' }} />
-            ))}
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '8px 14px', borderTop: '1px solid var(--border)' }}>
-            {[...sectorMap.keys()].map(s => (
-              <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-secondary)' }}>
-                <div style={{ width: 7, height: 7, borderRadius: '50%', background: SECTOR_COLORS[s] || '#94A3B8' }} />
-                {s}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Detail panel */}
-        {selected && (
-          <div className={`${styles.detail} slide-in`}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-              <div>
-                <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--brand)' }}>{selected.symbol}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{selected.company_name}</div>
-              </div>
-              <button onClick={() => setSelected(null)} style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
-            </div>
-
-            {selected.quote && (
-              <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 12 }}>
-                <div style={{ fontSize: 26, fontWeight: 700, fontFamily: 'var(--mono)' }}>{fi(selected.quote.ltp)}</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, marginTop: 2, color: selected.quote.change >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
-                  {selected.quote.change >= 0 ? '▲' : '▼'} {selected.quote.change >= 0 ? '+' : ''}{selected.quote.change.toFixed(2)} ({selected.quote.change_pct >= 0 ? '+' : ''}{selected.quote.change_pct.toFixed(2)}%)
+            {/* ── DETAIL PANEL ── */}
+            {selected && (
+              <div className={`${styles.detail} slide-in`}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--brand)' }}>{selected.symbol}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{selected.company_name}</div>
+                  </div>
+                  <button onClick={() => setSelected(null)} style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer' }}>✕</button>
+                </div>
+                {selected.quote && (
+                  <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 12 }}>
+                    <div style={{ fontSize: 26, fontWeight: 700, fontFamily: 'var(--mono)' }}>{fi(selected.quote.ltp)}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginTop: 2, color: selected.quote.change >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                      {selected.quote.change >= 0 ? '▲' : '▼'} {selected.quote.change >= 0 ? '+' : ''}{selected.quote.change.toFixed(2)} ({selected.quote.change_pct >= 0 ? '+' : ''}{selected.quote.change_pct.toFixed(2)}%)
+                    </div>
+                  </div>
+                )}
+                <div style={{ height: 120 }}>
+                  <Line key={selected.id} data={sparkData(selected)} options={sparkOpts as never} />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, background: 'var(--bg-tertiary)', borderRadius: 12, padding: 10 }}>
+                  {[
+                    { l: 'Open',      v: selected.quote ? fi(selected.quote.open) : '—', c: '' },
+                    { l: 'High',      v: selected.quote ? fi(selected.quote.high) : '—', c: 'var(--pos)' },
+                    { l: 'Low',       v: selected.quote ? fi(selected.quote.low) : '—', c: 'var(--neg)' },
+                    { l: 'Prev Close',v: selected.quote ? fi(selected.quote.prev_close) : '—', c: '' },
+                    { l: '52W High',  v: selected.quote?.week_52_high ? fi(selected.quote.week_52_high) : '—', c: 'var(--pos)' },
+                    { l: '52W Low',   v: selected.quote?.week_52_low ? fi(selected.quote.week_52_low) : '—', c: 'var(--neg)' },
+                    { l: 'P/E',       v: selected.quote?.pe_ratio ? selected.quote.pe_ratio.toFixed(1) : '—', c: '' },
+                    { l: 'Volume',    v: selected.quote ? (selected.quote.volume / 1e5).toFixed(1) + 'L' : '—', c: '' },
+                  ].map(({ l, v, c }) => (
+                    <div key={l}>
+                      <div style={{ fontSize: 10.5, color: 'var(--text-tertiary)' }}>{l}</div>
+                      <div style={{ fontSize: 12, fontWeight: 600, fontFamily: 'var(--mono)', color: c || 'var(--text-primary)' }}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ background: 'var(--bg-tertiary)', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 7 }}>
+                  {[
+                    { l: 'Qty held', v: `${selected.quantity} shares`, c: '' },
+                    { l: 'Avg cost', v: fi(selected.avg_buy_price), c: '' },
+                    { l: 'Invested', v: fL(selected.invested_value), c: '' },
+                    { l: 'Current',  v: fL(selected.current_value), c: 'var(--brand)' },
+                  ].map(({ l, v, c }) => (
+                    <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5 }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>{l}</span>
+                      <span style={{ fontWeight: 600, fontFamily: 'var(--mono)', color: c || 'var(--text-primary)' }}>{v}</span>
+                    </div>
+                  ))}
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: 7, display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 600 }}>
+                    <span>P&L</span>
+                    <span style={{ fontFamily: 'var(--mono)', color: selected.pnl >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                      {selected.pnl >= 0 ? '+' : ''}{fL(selected.pnl)} ({selected.pnl_pct >= 0 ? '+' : ''}{selected.pnl_pct.toFixed(1)}%)
+                    </span>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={() => openEdit(selected)} style={{ flex: 1, padding: 8, borderRadius: 10, background: 'var(--brand-pale)', color: 'var(--brand)', border: '1px solid var(--border-hover)', cursor: 'pointer', fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--font)' }}>✏ Edit</button>
+                  <button onClick={() => handleDelete(selected.id)} style={{ flex: 1, padding: 8, borderRadius: 10, background: 'var(--neg-bg)', color: 'var(--neg)', border: '1px solid rgba(239,68,68,0.2)', cursor: 'pointer', fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--font)' }}>🗑 Remove</button>
                 </div>
               </div>
             )}
+          </div>
 
-            <div style={{ height: 120 }}>
-              <Line key={selected.id} data={sparkData(selected)} options={chartOpts as never} />
-            </div>
+          {/* ══════════════════════════════════════════════════════════════════
+              CHARTS ROW 1 — Allocation + P&L Line
+          ══════════════════════════════════════════════════════════════════ */}
+          <div className={styles.chartsRow}>
 
-            {/* OHLC grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, background: 'var(--bg-tertiary)', borderRadius: 12, padding: 10 }}>
-              {[
-                { l: 'Open',      v: selected.quote ? fi(selected.quote.open)      : '—', c: '' },
-                { l: 'High',      v: selected.quote ? fi(selected.quote.high)      : '—', c: 'var(--pos)' },
-                { l: 'Low',       v: selected.quote ? fi(selected.quote.low)       : '—', c: 'var(--neg)' },
-                { l: 'Prev Close',v: selected.quote ? fi(selected.quote.prev_close): '—', c: '' },
-                { l: '52W High',  v: selected.quote?.week_52_high ? fi(selected.quote.week_52_high) : '—', c: 'var(--pos)' },
-                { l: '52W Low',   v: selected.quote?.week_52_low  ? fi(selected.quote.week_52_low)  : '—', c: 'var(--neg)' },
-                { l: 'P/E',       v: selected.quote?.pe_ratio ? selected.quote.pe_ratio.toFixed(1) : '—', c: '' },
-                { l: 'Volume',    v: selected.quote ? (selected.quote.volume / 1e5).toFixed(1) + 'L' : '—', c: '' },
-              ].map(({ l, v, c }) => (
-                <div key={l}>
-                  <div style={{ fontSize: 10.5, color: 'var(--text-tertiary)' }}>{l}</div>
-                  <div style={{ fontSize: 12, fontWeight: 600, fontFamily: 'var(--mono)', color: c || 'var(--text-primary)' }}>{v}</div>
+            {/* ── SECTOR ALLOCATION DONUT ── */}
+            <div className={styles.chartCard}>
+              <div className={styles.chartHead}>
+                <div className={styles.chartTitle}>Sector Allocation</div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{sectorEntries.length} sectors</div>
+              </div>
+              <div style={{ display: 'flex', gap: 20, alignItems: 'center' }}>
+                <div style={{ position: 'relative', width: 160, height: 160, flexShrink: 0 }}>
+                  <Doughnut
+                    data={{
+                      labels: sectorEntries.map(([s]) => s),
+                      datasets: [{
+                        data: sectorEntries.map(([, v]) => v),
+                        backgroundColor: sectorEntries.map(([s]) => SECTOR_COLORS[s] || '#94A3B8'),
+                        borderWidth: 0, hoverOffset: 4,
+                      }],
+                    }}
+                    options={{
+                      cutout: '72%', responsive: false,
+                      plugins: {
+                        legend: { display: false },
+                        tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${((ctx.raw as number / pnl.currentValue) * 100).toFixed(1)}%` } },
+                      },
+                      animation: { animateRotate: true, duration: 900 },
+                    }}
+                  />
+                  <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--text-primary)' }}>{sectorEntries.length}</span>
+                    <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>sectors</span>
+                  </div>
                 </div>
-              ))}
-            </div>
-
-            {/* Holding block */}
-            <div style={{ background: 'var(--bg-tertiary)', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 7 }}>
-              {[
-                { l: 'Qty held',     v: `${selected.quantity} shares` },
-                { l: 'Avg cost',     v: fi(selected.avg_buy_price) },
-                { l: 'Invested',     v: fL(selected.invested_value) },
-                { l: 'Current',      v: fL(selected.current_value), c: 'var(--brand)' },
-              ].map(({ l, v, c }) => (
-                <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5 }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>{l}</span>
-                  <span style={{ fontWeight: 600, fontFamily: 'var(--mono)', color: c || 'var(--text-primary)' }}>{v}</span>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 7 }}>
+                  {sectorEntries.map(([s, v]) => {
+                    const pct = pnl.currentValue > 0 ? (v / pnl.currentValue) * 100 : 0
+                    const color = SECTOR_COLORS[s] || '#94A3B8'
+                    return (
+                      <div key={s}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)' }}>
+                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, display: 'inline-block', flexShrink: 0 }} />
+                            {s}
+                          </span>
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 11.5, fontWeight: 600, color: 'var(--text-primary)' }}>{pct.toFixed(1)}%</span>
+                        </div>
+                        <div style={{ height: 3, borderRadius: 99, background: 'var(--border)', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: pct + '%', background: color, borderRadius: 99, transition: 'width .8s ease' }} />
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
-              ))}
-              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 7, display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 600 }}>
-                <span>P&L</span>
-                <span style={{ fontFamily: 'var(--mono)', color: selected.pnl >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
-                  {selected.pnl >= 0 ? '+' : ''}{fL(selected.pnl)} ({selected.pnl_pct >= 0 ? '+' : ''}{selected.pnl_pct.toFixed(1)}%)
-                </span>
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => openEdit(selected)} style={{ flex: 1, padding: 8, borderRadius: 10, background: 'var(--brand-pale)', color: 'var(--brand)', border: '1px solid var(--border-hover)', cursor: 'pointer', fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--font)' }}>✏ Edit</button>
-              <button onClick={() => handleDelete(selected.id)} style={{ flex: 1, padding: 8, borderRadius: 10, background: 'var(--neg-bg)', color: 'var(--neg)', border: '1px solid rgba(239,68,68,0.2)', cursor: 'pointer', fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--font)' }}>🗑 Remove</button>
+            {/* ── P&L LINE CHART ── */}
+            <div className={styles.chartCard}>
+              <div className={styles.chartHead}>
+                <div className={styles.chartTitle}>Portfolio Growth</div>
+                <div style={{ display: 'flex', gap: 12, fontSize: 11.5 }}>
+                  <span style={{ color: 'var(--text-tertiary)' }}>Invested: <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{fL(pnl.totalInvested)}</span></span>
+                  <span style={{ color: 'var(--text-tertiary)' }}>Current: <span style={{ color: 'var(--pos)', fontWeight: 600 }}>{fL(pnl.currentValue)}</span></span>
+                </div>
+              </div>
+              <div style={{ height: 220 }}>
+                <Line data={pnlLineData} options={lineOpts('₹') as never} />
+              </div>
+              <div style={{ display: 'flex', gap: 16, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Total P&L: <span style={{ color: pnl.totalPnL >= 0 ? 'var(--pos)' : 'var(--neg)', fontWeight: 600 }}>{pnl.totalPnL >= 0 ? '+' : ''}{fL(pnl.totalPnL)} ({pnl.totalPnLPct >= 0 ? '+' : ''}{pnl.totalPnLPct.toFixed(1)}%)</span></div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Today: <span style={{ color: pnl.dayPnL >= 0 ? 'var(--pos)' : 'var(--neg)', fontWeight: 600 }}>{pnl.dayPnL >= 0 ? '+' : ''}{fL(pnl.dayPnL)}</span></div>
+              </div>
             </div>
           </div>
-        )}
-      </div>
 
-      {/* Modal */}
+          {/* ══════════════════════════════════════════════════════════════════
+              CHARTS ROW 2 — Benchmark Comparison
+          ══════════════════════════════════════════════════════════════════ */}
+          <div className={styles.chartCardFull}>
+            <div className={styles.chartHead}>
+              <div>
+                <div className={styles.chartTitle}>Portfolio vs Benchmark</div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
+                  Rebased to 100 — shows whether your portfolio is beating Nifty 50 and Nifty Next 50
+                </div>
+              </div>
+              {/* Beating badge */}
+              {(() => {
+                const myReturn   = cumulativePortfolio[cumulativePortfolio.length - 1] - 100
+                const niftyReturn = cumulativeNifty[cumulativeNifty.length - 1] - 100
+                const beating    = myReturn > niftyReturn
+                return (
+                  <div style={{ padding: '6px 14px', borderRadius: 99, fontSize: 12, fontWeight: 600, background: beating ? 'var(--pos-bg)' : 'var(--neg-bg)', color: beating ? 'var(--pos)' : 'var(--neg)' }}>
+                    {beating ? '🏆 Beating Nifty 50' : '📉 Lagging Nifty 50'}
+                  </div>
+                )
+              })()}
+            </div>
+
+            <div style={{ height: 260 }}>
+              <Line data={benchmarkData} options={lineOpts('index') as never} />
+            </div>
+
+            {/* Comparison stats */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+              {[
+                { label: 'My Portfolio', color: '#8B5CF6', val: ((cumulativePortfolio[cumulativePortfolio.length - 1] - 100)).toFixed(2) + '%' },
+                { label: 'Nifty 50',     color: '#06B6D4', val: ((cumulativeNifty[cumulativeNifty.length - 1] - 100)).toFixed(2) + '%' },
+                { label: 'Nifty Next 50', color: '#F59E0B', val: ((cumulativeNiftyNext[cumulativeNiftyNext.length - 1] - 100)).toFixed(2) + '%' },
+              ].map(b => {
+                const num = parseFloat(b.val)
+                return (
+                  <div key={b.label} style={{ background: 'var(--bg-tertiary)', borderRadius: 12, padding: '12px 14px', borderLeft: `3px solid ${b.color}` }}>
+                    <div style={{ fontSize: 11.5, color: 'var(--text-tertiary)', marginBottom: 4 }}>{b.label}</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--mono)', color: num >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                      {num >= 0 ? '+' : ''}{b.val}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>12-month return</div>
+                  </div>
+                )
+              })}
+            </div>
+
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10, padding: '8px 0 0', borderTop: '1px solid var(--border)', lineHeight: 1.6 }}>
+              ⚠ Benchmark data is indicative. Portfolio returns use live prices. Nifty data is approximate — connect to a market data API for real-time index values.
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          ADD / EDIT MODAL
+      ══════════════════════════════════════════════════════════════════ */}
       {showModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}
           onClick={e => e.target === e.currentTarget && setShowModal(false)}>
@@ -494,7 +766,6 @@ export default function StockTracker() {
               <h3 style={{ fontSize: 16, fontWeight: 700 }}>{editingId ? 'Edit Holding' : 'Add Stock'}</h3>
               <button onClick={() => setShowModal(false)} style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: 14 }}>✕</button>
             </div>
-
             <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
               {/* Search */}
@@ -502,18 +773,16 @@ export default function StockTracker() {
                 <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 5 }}>Stock Symbol</label>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--inp-bg)', border: '1px solid var(--inp-border)', borderRadius: 10, padding: '0 12px', height: 38 }}>
                   <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>🔍</span>
-                  <input
-                    type="text" placeholder="Search NSE symbol or company…"
+                  <input type="text" placeholder="Search NSE symbol or company…"
                     value={searchQ} onChange={e => handleSearch(e.target.value)}
                     style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontSize: 13.5, fontFamily: 'var(--font)', color: 'var(--text-primary)' }}
-                    autoComplete="off"
-                  />
+                    autoComplete="off" />
                 </div>
                 {dropOpen && searchRes.length > 0 && (
                   <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--bg-primary)', border: '1px solid var(--border-hover)', borderRadius: 12, zIndex: 50, marginTop: 4, overflow: 'hidden', boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
                     {searchRes.slice(0, 8).map(r => (
                       <div key={r.symbol} onClick={() => pickStock(r)}
-                        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', cursor: 'pointer', fontSize: 13, transition: 'var(--trans)' }}
+                        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', cursor: 'pointer', fontSize: 13, transition: 'background .1s' }}
                         onMouseOver={e => (e.currentTarget as HTMLDivElement).style.background = 'var(--brand-pale)'}
                         onMouseOut={e => (e.currentTarget as HTMLDivElement).style.background = 'transparent'}
                       >
@@ -526,12 +795,11 @@ export default function StockTracker() {
                 )}
                 {dropOpen && searchRes.length === 0 && (
                   <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 12, zIndex: 50, marginTop: 4, padding: '10px 14px', fontSize: 12.5, color: 'var(--text-tertiary)' }}>
-                    No results — try popular stocks below
-                    <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                      {POPULAR_STOCKS.slice(0, 8).map(s => (
+                    No results — try:
+                    <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                      {POPULAR_STOCKS.slice(0, 10).map(s => (
                         <span key={s.symbol} onClick={() => pickStock(s)}
-                          style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: 'var(--brand-pale)', color: 'var(--brand)', cursor: 'pointer', fontWeight: 600 }}
-                        >{s.symbol}</span>
+                          style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: 'var(--brand-pale)', color: 'var(--brand)', cursor: 'pointer', fontWeight: 600 }}>{s.symbol}</span>
                       ))}
                     </div>
                   </div>
@@ -541,12 +809,13 @@ export default function StockTracker() {
               {/* Exchange + Sector */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 {[
-                  { label: 'Exchange', id: 'exch', val: form.exchange, opts: ['NSE', 'BSE'], onChange: (v: string) => setForm(f => ({ ...f, exchange: v as 'NSE'|'BSE' })) },
-                  { label: 'Sector',   id: 'sec',  val: form.sector,   opts: SECTORS,        onChange: (v: string) => setForm(f => ({ ...f, sector: v })) },
-                ].map(({ label, id, val, opts, onChange }) => (
-                  <div key={id}>
+                  { label: 'Exchange', val: form.exchange, opts: ['NSE', 'BSE'], key: 'exchange' },
+                  { label: 'Sector',   val: form.sector,   opts: SECTORS,        key: 'sector' },
+                ].map(({ label, val, opts, key }) => (
+                  <div key={key}>
                     <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 5 }}>{label}</label>
-                    <select value={val} onChange={e => onChange(e.target.value)} style={{ width: '100%', padding: '9px 12px', background: 'var(--inp-bg)', border: '1px solid var(--inp-border)', borderRadius: 10, fontSize: 13.5, fontFamily: 'var(--font)', color: 'var(--text-primary)', outline: 'none', appearance: 'none' }}>
+                    <select value={val} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                      style={{ width: '100%', padding: '9px 12px', background: 'var(--inp-bg)', border: '1px solid var(--inp-border)', borderRadius: 10, fontSize: 13.5, fontFamily: 'var(--font)', color: 'var(--text-primary)', outline: 'none', appearance: 'none' }}>
                       {opts.map(o => <option key={o} value={o}>{o}</option>)}
                     </select>
                   </div>
@@ -556,15 +825,14 @@ export default function StockTracker() {
               {/* Qty + Price */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 {[
-                  { label: 'Quantity', placeholder: 'e.g. 50',   val: form.quantity,       key: 'quantity' as keyof FormData },
-                  { label: 'Avg Buy Price (₹)', placeholder: 'e.g. 2480', val: form.avg_buy_price, key: 'avg_buy_price' as keyof FormData },
-                ].map(({ label, placeholder, val, key }) => (
+                  { label: 'Quantity', ph: 'e.g. 50',   key: 'quantity' },
+                  { label: 'Avg Buy Price (₹)', ph: 'e.g. 2480', key: 'avg_buy_price' },
+                ].map(({ label, ph, key }) => (
                   <div key={key}>
                     <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 5 }}>{label}</label>
-                    <input type="number" placeholder={placeholder} value={val}
+                    <input type="number" placeholder={ph} value={form[key as keyof FormData]}
                       onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-                      style={{ width: '100%', padding: '9px 12px', background: 'var(--inp-bg)', border: '1px solid var(--inp-border)', borderRadius: 10, fontSize: 13.5, fontFamily: 'var(--font)', color: 'var(--text-primary)', outline: 'none' }}
-                    />
+                      style={{ width: '100%', padding: '9px 12px', background: 'var(--inp-bg)', border: '1px solid var(--inp-border)', borderRadius: 10, fontSize: 13.5, fontFamily: 'var(--font)', color: 'var(--text-primary)', outline: 'none' }} />
                   </div>
                 ))}
               </div>
@@ -574,8 +842,7 @@ export default function StockTracker() {
                 <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 5 }}>Buy Date</label>
                 <input type="date" value={form.buy_date} max={new Date().toISOString().split('T')[0]}
                   onChange={e => setForm(f => ({ ...f, buy_date: e.target.value }))}
-                  style={{ width: '100%', padding: '9px 12px', background: 'var(--inp-bg)', border: '1px solid var(--inp-border)', borderRadius: 10, fontSize: 13.5, fontFamily: 'var(--font)', color: 'var(--text-primary)', outline: 'none' }}
-                />
+                  style={{ width: '100%', padding: '9px 12px', background: 'var(--inp-bg)', border: '1px solid var(--inp-border)', borderRadius: 10, fontSize: 13.5, fontFamily: 'var(--font)', color: 'var(--text-primary)', outline: 'none' }} />
               </div>
 
               {/* Preview */}
@@ -591,11 +858,9 @@ export default function StockTracker() {
                 <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 5 }}>Notes (optional)</label>
                 <input type="text" placeholder="e.g. Long term hold" value={form.notes}
                   onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-                  style={{ width: '100%', padding: '9px 12px', background: 'var(--inp-bg)', border: '1px solid var(--inp-border)', borderRadius: 10, fontSize: 13.5, fontFamily: 'var(--font)', color: 'var(--text-primary)', outline: 'none' }}
-                />
+                  style={{ width: '100%', padding: '9px 12px', background: 'var(--inp-bg)', border: '1px solid var(--inp-border)', borderRadius: 10, fontSize: 13.5, fontFamily: 'var(--font)', color: 'var(--text-primary)', outline: 'none' }} />
               </div>
             </div>
-
             <div style={{ padding: '0 22px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={() => setShowModal(false)} style={{ padding: '9px 20px', borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 13.5, fontWeight: 600, fontFamily: 'var(--font)', cursor: 'pointer' }}>Cancel</button>
               <button onClick={handleSubmit} disabled={!form.symbol || !form.quantity || !form.avg_buy_price}
