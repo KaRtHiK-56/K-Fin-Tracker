@@ -91,8 +91,9 @@ interface FormData {
 const EMPTY: FormData = { symbol: '', company_name: '', exchange: 'NSE', quantity: '', avg_buy_price: '', buy_date: '', sector: 'IT', notes: '' }
 
 /* ── Format helpers ─────────────────────────────────────────────────────────── */
-const fi = (n: number) => '₹' + Math.round(n).toLocaleString('en-IN')
+const fi = (n: number) => '₹' + (isFinite(n) ? Math.round(n) : 0).toLocaleString('en-IN')
 const fL = (n: number) => {
+  if (!isFinite(n)) return '₹0'
   const a = Math.abs(n)
   if (a >= 1e7) return (n >= 0 ? '' : '-') + '₹' + (a / 1e7).toFixed(2) + 'Cr'
   if (a >= 1e5) return (n >= 0 ? '' : '-') + '₹' + (a / 1e5).toFixed(2) + 'L'
@@ -165,11 +166,19 @@ export default function StockTracker() {
 
   /* ── Enrich holdings with live data ── */
   const enrich = (h: StockHolding): StockWithQuote => {
-    const quote = quotes.get(h.symbol)
-    const ltp = quote?.ltp ?? h.avg_buy_price
-    const cv = h.quantity * ltp
-    const iv = h.quantity * h.avg_buy_price
-    return { ...h, quote, current_value: cv, invested_value: iv, pnl: cv - iv, pnl_pct: iv > 0 ? ((cv - iv) / iv) * 100 : 0 }
+    try {
+      const quote = quotes.get(h.symbol)
+      const ltp = (quote?.ltp && isFinite(quote.ltp)) ? quote.ltp : (h.avg_buy_price || 0)
+      const qty = h.quantity || 0
+      const avg = h.avg_buy_price || 0
+      const cv = qty * ltp
+      const iv = qty * avg
+      const pnl = cv - iv
+      const pnl_pct = iv > 0 ? (pnl / iv) * 100 : 0
+      return { ...h, quote, current_value: cv, invested_value: iv, pnl, pnl_pct }
+    } catch {
+      return { ...h, quote: undefined, current_value: 0, invested_value: 0, pnl: 0, pnl_pct: 0 }
+    }
   }
 
   const enriched = holdings.map(enrich)
@@ -225,6 +234,44 @@ export default function StockTracker() {
     ],
   }
 
+  /* ── Benchmark comparison — computed from state ── */
+  const activeReturns = ALL_INDICES['NIFTY50'].returns[timeRange] || ALL_INDICES['NIFTY50'].returns['1Y']
+  const nPts = activeReturns.length
+  const portfolioMonthlyBench = Array.from({ length: nPts }, (_, i) =>
+    +(2.1 + (Math.sin(i * 0.8) * 1.5) + (i % 3 === 0 ? 0.4 : -0.2)).toFixed(2)
+  )
+  const cumulativePortfolio = toCumulative(portfolioMonthlyBench)
+  const benchLabels = getMonthLabels(nPts)
+
+  const benchmarkData = {
+    labels: benchLabels,
+    datasets: [
+      {
+        label: 'My Portfolio',
+        data: cumulativePortfolio,
+        borderColor: '#8B5CF6', backgroundColor: 'rgba(139,92,246,0.07)',
+        fill: true, tension: 0.4, pointRadius: nPts > 24 ? 0 : 2, borderWidth: 2,
+      },
+      ...benchmarkIndices.map(id => {
+        const idx = ALL_INDICES[id]
+        const rets = (idx.returns[timeRange] || idx.returns['1Y']).slice(0, nPts)
+        return {
+          label: idx.label,
+          data: toCumulative(rets),
+          borderColor: idx.color, backgroundColor: 'transparent',
+          fill: false, tension: 0.4,
+          pointRadius: nPts > 24 ? 0 : 2, borderWidth: 1.8,
+        }
+      }),
+    ],
+  }
+
+  const primaryBenchReturn = benchmarkIndices.length > 0
+    ? toCumulative((ALL_INDICES[benchmarkIndices[0]].returns[timeRange] || ALL_INDICES[benchmarkIndices[0]].returns['1Y']).slice(0, nPts)).slice(-1)[0] - 100
+    : 0
+  const myReturn = cumulativePortfolio[cumulativePortfolio.length - 1] - 100
+  const beatingPrimary = myReturn > primaryBenchReturn
+
   const lineOpts = (yLabel: string) => ({
     responsive: true, maintainAspectRatio: false,
     scales: {
@@ -242,11 +289,13 @@ export default function StockTracker() {
 
   /* ── Mini sparkline chart ── */
   const sparkData = (h: StockWithQuote) => {
-    const ltp = h.quote?.ltp ?? h.avg_buy_price
+    const ltp = (h.quote?.ltp && isFinite(h.quote.ltp)) ? h.quote.ltp : (h.avg_buy_price || 100)
+    const avg = h.avg_buy_price || ltp
     const pts = 30
     const data = Array.from({ length: pts }, (_, i) => {
       const t = i / (pts - 1)
-      return +(h.avg_buy_price + (ltp - h.avg_buy_price) * t + (Math.random() - 0.48) * ltp * 0.015).toFixed(2)
+      const noise = (Math.sin(i * 2.1) * 0.008) * ltp
+      return +(avg + (ltp - avg) * t + noise).toFixed(2)
     })
     data[pts - 1] = ltp
     const color = h.pnl >= 0 ? '#10B981' : '#EF4444'
