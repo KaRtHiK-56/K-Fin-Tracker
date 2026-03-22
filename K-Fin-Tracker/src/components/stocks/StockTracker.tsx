@@ -6,7 +6,7 @@ import {
 } from 'chart.js'
 import {
   fetchMultipleQuotes, computePortfolioPnL, computeHealthScore,
-  searchStocks, POPULAR_STOCKS,
+  searchStocks, POPULAR_STOCKS, isMarketOpen,
 } from '../../lib/stockApi'
 import type { StockHolding, StockWithQuote, LiveQuote, SortField, SortDir } from '../../types'
 import { useTheme } from '../../lib/ThemeContext'
@@ -204,73 +204,95 @@ export default function StockTracker() {
   enriched.forEach(h => sectorMap.set(h.sector || 'Other', (sectorMap.get(h.sector || 'Other') || 0) + h.current_value))
   const sectorEntries = [...sectorMap.entries()].sort((a, b) => b[1] - a[1])
 
-  /* ── P&L line chart data — uses dynamic month labels ── */
-  const pnlMonths = getMonthLabels(12)
-  const pnlLineData = {
-    labels: pnlMonths,
-    datasets: [
-      {
-        label: 'My Portfolio',
-        data: pnlMonths.map((_, i) => {
-          const base = pnl.totalInvested || 100000
-          return +(base * (1 + (i + 1) * 0.016 + (Math.sin(i) * 0.008))).toFixed(0)
-        }),
-        borderColor: '#8B5CF6',
-        backgroundColor: 'rgba(139,92,246,0.08)',
-        fill: true, tension: 0.4, pointRadius: 3,
-        pointBackgroundColor: '#8B5CF6', borderWidth: 2,
-      },
-      {
-        label: 'Invested',
-        data: pnlMonths.map((_, i) => {
-          const base = pnl.totalInvested || 100000
-          return +(base * (1 + i * 0.005)).toFixed(0)
-        }),
-        borderColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)',
-        backgroundColor: 'transparent',
-        fill: false, tension: 0.4, pointRadius: 0,
-        borderDash: [5, 4], borderWidth: 1.5,
-      },
-    ],
-  }
+  /* ── P&L line chart — stable, based on real invested/current values ──
+     Uses useMemo so it ONLY recomputes when actual portfolio data changes,
+     not on every render/refresh. Fake data is seeded from real values.       */
+  const pnlLineData = useMemo(() => {
+    const months = getMonthLabels(12)
+    const invested = pnl.totalInvested || 0
+    const current  = pnl.currentValue  || 0
+    if (invested === 0) return { labels: months, datasets: [] }
 
-  /* ── Benchmark comparison — computed from state ── */
-  const activeReturns = ALL_INDICES['NIFTY50'].returns[timeRange] || ALL_INDICES['NIFTY50'].returns['1Y']
-  const nPts = activeReturns.length
-  const portfolioMonthlyBench = Array.from({ length: nPts }, (_, i) =>
-    +(2.1 + (Math.sin(i * 0.8) * 1.5) + (i % 3 === 0 ? 0.4 : -0.2)).toFixed(2)
-  )
-  const cumulativePortfolio = toCumulative(portfolioMonthlyBench)
-  const benchLabels = getMonthLabels(nPts)
+    // Build a smooth curve from invested → current over 12 months
+    // Uses a deterministic growth curve — no Math.random()
+    const growthRate = current > 0 ? Math.pow(current / invested, 1 / 11) - 1 : 0.016
+    return {
+      labels: months,
+      datasets: [
+        {
+          label: 'My Portfolio',
+          data: months.map((_, i) => +(invested * Math.pow(1 + growthRate, i)).toFixed(0)),
+          borderColor: '#8B5CF6',
+          backgroundColor: 'rgba(139,92,246,0.08)',
+          fill: true, tension: 0.4, pointRadius: 3,
+          pointBackgroundColor: '#8B5CF6', borderWidth: 2,
+        },
+        {
+          label: 'Invested',
+          data: months.map(() => invested),
+          borderColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)',
+          backgroundColor: 'transparent',
+          fill: false, tension: 0.4, pointRadius: 0,
+          borderDash: [5, 4], borderWidth: 1.5,
+        },
+      ],
+    }
+  }, [pnl.totalInvested, pnl.currentValue, isDark])
 
-  const benchmarkData = {
-    labels: benchLabels,
-    datasets: [
-      {
-        label: 'My Portfolio',
-        data: cumulativePortfolio,
-        borderColor: '#8B5CF6', backgroundColor: 'rgba(139,92,246,0.07)',
-        fill: true, tension: 0.4, pointRadius: nPts > 24 ? 0 : 2, borderWidth: 2,
+  /* ── Benchmark comparison — useMemo, only recomputes when user changes
+     timeRange or selected indices. Portfolio curve uses actual total return
+     distributed evenly — deterministic, no random numbers.                  */
+  const { benchmarkData, cumulativePortfolio, myReturn, beatingPrimary, primaryBenchReturn, nPts } = useMemo(() => {
+    const activeRets = ALL_INDICES['NIFTY50'].returns[timeRange] || ALL_INDICES['NIFTY50'].returns['1Y']
+    const n = activeRets.length
+    const labels = getMonthLabels(n)
+
+    // Portfolio curve: distribute actual total return evenly across periods
+    const invested = pnl.totalInvested || 100000
+    const current  = pnl.currentValue  || invested
+    const totalReturnPct = invested > 0 ? ((current - invested) / invested) * 100 : 0
+    const perPeriodReturn = n > 1 ? totalReturnPct / (n - 1) : 0
+
+    const portReturns = Array.from({ length: n }, (_, i) =>
+      i === 0 ? 0 : +perPeriodReturn.toFixed(3)
+    )
+    const cumPort = toCumulative(portReturns)
+    const myRet = cumPort[cumPort.length - 1] - 100
+
+    const primBenchRet = benchmarkIndices.length > 0
+      ? toCumulative((ALL_INDICES[benchmarkIndices[0]].returns[timeRange] || ALL_INDICES[benchmarkIndices[0]].returns['1Y']).slice(0, n)).slice(-1)[0] - 100
+      : 0
+
+    return {
+      benchmarkData: {
+        labels,
+        datasets: [
+          {
+            label: 'My Portfolio',
+            data: cumPort,
+            borderColor: '#8B5CF6', backgroundColor: 'rgba(139,92,246,0.07)',
+            fill: true, tension: 0.4, pointRadius: n > 24 ? 0 : 2, borderWidth: 2,
+          },
+          ...benchmarkIndices.map(id => {
+            const idx = ALL_INDICES[id]
+            const rets = (idx.returns[timeRange] || idx.returns['1Y']).slice(0, n)
+            return {
+              label: idx.label,
+              data: toCumulative(rets),
+              borderColor: idx.color, backgroundColor: 'transparent',
+              fill: false, tension: 0.4,
+              pointRadius: n > 24 ? 0 : 2, borderWidth: 1.8,
+            }
+          }),
+        ],
       },
-      ...benchmarkIndices.map(id => {
-        const idx = ALL_INDICES[id]
-        const rets = (idx.returns[timeRange] || idx.returns['1Y']).slice(0, nPts)
-        return {
-          label: idx.label,
-          data: toCumulative(rets),
-          borderColor: idx.color, backgroundColor: 'transparent',
-          fill: false, tension: 0.4,
-          pointRadius: nPts > 24 ? 0 : 2, borderWidth: 1.8,
-        }
-      }),
-    ],
-  }
-
-  const primaryBenchReturn = benchmarkIndices.length > 0
-    ? toCumulative((ALL_INDICES[benchmarkIndices[0]].returns[timeRange] || ALL_INDICES[benchmarkIndices[0]].returns['1Y']).slice(0, nPts)).slice(-1)[0] - 100
-    : 0
-  const myReturn = cumulativePortfolio[cumulativePortfolio.length - 1] - 100
-  const beatingPrimary = myReturn > primaryBenchReturn
+      cumulativePortfolio: cumPort,
+      myReturn: myRet,
+      beatingPrimary: myRet > primBenchRet,
+      primaryBenchReturn: primBenchRet,
+      nPts: n,
+    }
+  }, [timeRange, benchmarkIndices, pnl.totalInvested, pnl.currentValue])
 
   const lineOpts = (yLabel: string) => ({
     responsive: true, maintainAspectRatio: false,
@@ -398,6 +420,14 @@ export default function StockTracker() {
           <p className={styles.sub}>
             NSE / BSE · Live prices
             {updatedAt && <span className={styles.updated}> · Updated {updatedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>}
+            {' '}
+            <span style={{
+              fontSize: 10.5, fontWeight: 600, padding: '1px 8px', borderRadius: 99,
+              background: isMarketOpen() ? 'var(--pos-bg)' : 'var(--gold-bg)',
+              color: isMarketOpen() ? 'var(--pos)' : 'var(--gold)',
+            }}>
+              {isMarketOpen() ? '● Market Open' : '○ Market Closed'}
+            </span>
           </p>
         </div>
         <div className={styles.hActions}>
@@ -443,7 +473,7 @@ export default function StockTracker() {
               { label: 'Invested',    val: fL(pnl.totalInvested), color: 'var(--text-primary)' },
               { label: 'Current',     val: fL(pnl.currentValue),  color: 'var(--brand)' },
               { label: 'Total P&L',   val: (pnl.totalPnL >= 0 ? '+' : '') + fL(pnl.totalPnL), sub: (pnl.totalPnLPct >= 0 ? '+' : '') + pnl.totalPnLPct.toFixed(1) + '%', color: pnl.totalPnL >= 0 ? 'var(--pos)' : 'var(--neg)' },
-              { label: "Today's P&L", val: (pnl.dayPnL >= 0 ? '+' : '') + fL(pnl.dayPnL), sub: (pnl.dayPnLPct >= 0 ? '+' : '') + pnl.dayPnLPct.toFixed(2) + '%', color: pnl.dayPnL >= 0 ? 'var(--pos)' : 'var(--neg)' },
+              { label: isMarketOpen() ? "Today's P&L" : "Last Day P&L", val: (pnl.dayPnL >= 0 ? '+' : '') + fL(pnl.dayPnL), sub: (pnl.dayPnLPct >= 0 ? '+' : '') + pnl.dayPnLPct.toFixed(2) + '%', color: pnl.dayPnL >= 0 ? 'var(--pos)' : 'var(--neg)' },
             ].map(c => (
               <div key={c.label} className={styles.sCard}>
                 <div className={styles.sLabel}>{c.label}</div>
