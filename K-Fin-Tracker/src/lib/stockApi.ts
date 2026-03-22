@@ -135,17 +135,29 @@ export async function searchStocks(query: string): Promise<SearchResult[]> {
 export function computePortfolioPnL(holdings: StockHolding[], quotes: Map<string, LiveQuote>) {
   let totalInvested = 0, currentValue = 0, dayPnL = 0
   const marketOpen = isMarketOpen()
+
   holdings.forEach(h => {
-    totalInvested += h.quantity * h.avg_buy_price
+    const invested = h.quantity * h.avg_buy_price
+    totalInvested += invested
+
     const q = quotes.get(h.symbol)
-    const ltp = q?.ltp ?? h.avg_buy_price
-    currentValue += h.quantity * ltp
-    // Only count day P&L when market is actually open
-    dayPnL += marketOpen ? h.quantity * (q?.change ?? 0) : 0
+    const hasRealQuote = q && !((q as any)._isMock) && isFinite(q.ltp) && q.ltp > 0
+
+    if (hasRealQuote) {
+      // Live price available — use it
+      currentValue += h.quantity * q.ltp
+      dayPnL += marketOpen ? h.quantity * (q.change ?? 0) : 0
+    } else {
+      // No live price — current value = invested value (no fake P&L)
+      currentValue += invested
+    }
   })
-  const totalPnL = currentValue - totalInvested
+
+  const totalPnL    = currentValue - totalInvested
   const totalPnLPct = totalInvested > 0 ? (totalPnL / totalInvested) * 100 : 0
-  const dayPnLPct = currentValue > 0 ? (dayPnL / (currentValue - dayPnL)) * 100 : 0
+  const dayPnLPct   = currentValue > 0 && dayPnL !== 0
+    ? (dayPnL / (currentValue - dayPnL)) * 100 : 0
+
   return { totalInvested, currentValue, totalPnL, totalPnLPct, dayPnL, dayPnLPct }
 }
 
