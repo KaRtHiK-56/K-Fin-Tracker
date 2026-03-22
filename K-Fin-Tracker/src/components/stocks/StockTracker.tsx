@@ -376,21 +376,27 @@ export default function StockTracker() {
     interaction: { mode: 'index' as const, intersect: false },
   })
 
-  /* ── Mini sparkline chart ── */
+  /* ── Mini sparkline — only draw when quote exists, flat line otherwise ── */
   const sparkData = (h: StockWithQuote) => {
-    const ltp = (h.quote?.ltp && isFinite(h.quote.ltp)) ? h.quote.ltp : (h.avg_buy_price || 100)
-    const avg = h.avg_buy_price || ltp
-    const pts = 30
-    const data = Array.from({ length: pts }, (_, i) => {
-      const t = i / (pts - 1)
-      const noise = (Math.sin(i * 2.1) * 0.008) * ltp
-      return +(avg + (ltp - avg) * t + noise).toFixed(2)
-    })
-    data[pts - 1] = ltp
-    const color = h.pnl >= 0 ? '#10B981' : '#EF4444'
+    const hasQuote = h.quote && isFinite(h.quote.ltp) && h.quote.ltp > 0
+    const ltp  = hasQuote ? h.quote!.ltp : h.avg_buy_price
+    const prev = hasQuote ? (h.quote!.prev_close || h.avg_buy_price) : h.avg_buy_price
+    const color = h.pnl > 0 ? '#10B981' : h.pnl < 0 ? '#EF4444' : '#6B7280'
+
+    // Build a simple 2-point line: prev_close → ltp (accurate, no sine wave)
+    // If no quote, flat line at avg_buy_price
+    const data = hasQuote
+      ? [prev, prev, prev, (prev + ltp) / 2, ltp, ltp]
+      : [ltp, ltp, ltp, ltp, ltp, ltp]
+
     return {
       labels: data.map((_, i) => i),
-      datasets: [{ data, borderColor: color, backgroundColor: color + '18', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2 }],
+      datasets: [{
+        data,
+        borderColor: hasQuote ? color : 'var(--border)',
+        backgroundColor: hasQuote ? color + '18' : 'transparent',
+        fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2,
+      }],
     }
   }
 
@@ -539,9 +545,9 @@ export default function StockTracker() {
           <div className={styles.strip}>
             {[
               { label: 'Invested',    val: fL(pnl.totalInvested), color: 'var(--text-primary)' },
-              { label: 'Current',     val: fL(pnl.currentValue),  color: 'var(--brand)' },
-              { label: 'Total P&L',   val: (pnl.totalPnL >= 0 ? '+' : '') + fL(pnl.totalPnL), sub: (pnl.totalPnLPct >= 0 ? '+' : '') + pnl.totalPnLPct.toFixed(1) + '%', color: pnl.totalPnL >= 0 ? 'var(--pos)' : 'var(--neg)' },
-              { label: isMarketOpen() ? "Today's P&L" : "Last Session P&L", val: (pnl.dayPnL >= 0 ? '+' : '') + fL(pnl.dayPnL), sub: (pnl.dayPnLPct >= 0 ? '+' : '') + pnl.dayPnLPct.toFixed(2) + '%', color: pnl.dayPnL >= 0 ? 'var(--pos)' : 'var(--neg)' },
+              { label: 'Current',     val: quotes.size > 0 ? fL(pnl.currentValue) : '···', color: 'var(--brand)' },
+              { label: 'Total P&L',   val: quotes.size > 0 ? (pnl.totalPnL >= 0 ? '+' : '') + fL(pnl.totalPnL) : '···', sub: quotes.size > 0 ? (pnl.totalPnLPct >= 0 ? '+' : '') + pnl.totalPnLPct.toFixed(2) + '%' : 'Loading live prices', color: pnl.totalPnL >= 0 ? 'var(--pos)' : 'var(--neg)' },
+              { label: isMarketOpen() ? "Today's P&L" : "Last Session P&L", val: quotes.size > 0 ? (pnl.dayPnL >= 0 ? '+' : '') + fL(pnl.dayPnL) : '···', sub: quotes.size > 0 ? (pnl.dayPnLPct >= 0 ? '+' : '') + pnl.dayPnLPct.toFixed(2) + '%' : isMarketOpen() ? 'Market open' : 'Market closed', color: pnl.dayPnL >= 0 ? 'var(--pos)' : 'var(--neg)' },
             ].map(c => (
               <div key={c.label} className={styles.sCard}>
                 <div className={styles.sLabel}>{c.label}</div>
@@ -690,17 +696,26 @@ export default function StockTracker() {
                             </td>
                             <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>{h.quantity}</td>
                             <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>{fi(h.avg_buy_price)}</td>
-                            <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5, color: h.quote ? (h.quote.change >= 0 ? 'var(--pos)' : 'var(--neg)') : 'var(--text-tertiary)' }}>
-                              {h.quote ? fi(h.quote.ltp) : '···'}
+                            <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>
+                              {h.quote && h.quote.ltp > 0
+                                ? <span style={{ color: h.quote.change >= 0 ? 'var(--pos)' : 'var(--neg)' }}>{fi(h.quote.ltp)}</span>
+                                : <span style={{ color: 'var(--text-muted)', letterSpacing: '0.1em' }}>···</span>
+                              }
                             </td>
                             <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>{fL(h.current_value)}</td>
-                            <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5, color: h.pnl >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
-                              {h.pnl >= 0 ? '+' : ''}{fL(h.pnl)}
+                            <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>
+                              {h.quote && h.quote.ltp > 0
+                                ? <span style={{ color: h.pnl >= 0 ? 'var(--pos)' : 'var(--neg)' }}>{h.pnl >= 0 ? '+' : ''}{fL(h.pnl)}</span>
+                                : <span style={{ color: 'var(--text-muted)' }}>···</span>
+                              }
                             </td>
                             <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right' }}>
-                              <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 99, background: h.pnl_pct >= 0 ? 'var(--pos-bg)' : 'var(--neg-bg)', color: h.pnl_pct >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
-                                {h.pnl_pct >= 0 ? '↑' : '↓'} {Math.abs(h.pnl_pct).toFixed(1)}%
-                              </span>
+                              {h.quote && h.quote.ltp > 0
+                                ? <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 99, background: h.pnl_pct >= 0 ? 'var(--pos-bg)' : 'var(--neg-bg)', color: h.pnl_pct >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                                    {h.pnl_pct >= 0 ? '↑' : '↓'} {Math.abs(h.pnl_pct).toFixed(2)}%
+                                  </span>
+                                : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>···</span>
+                              }
                             </td>
                             <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}` }}>
                               <span style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 8px', borderRadius: 99, background: sc + '22', color: sc }}>{h.sector || 'Other'}</span>
@@ -735,14 +750,21 @@ export default function StockTracker() {
                   </div>
                   <button onClick={() => setSelected(null)} style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer' }}>✕</button>
                 </div>
-                {selected.quote && (
-                  <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 12 }}>
-                    <div style={{ fontSize: 26, fontWeight: 700, fontFamily: 'var(--mono)' }}>{fi(selected.quote.ltp)}</div>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginTop: 2, color: selected.quote.change >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
-                      {selected.quote.change >= 0 ? '▲' : '▼'} {selected.quote.change >= 0 ? '+' : ''}{selected.quote.change.toFixed(2)} ({selected.quote.change_pct >= 0 ? '+' : ''}{selected.quote.change_pct.toFixed(2)}%)
+              <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 12 }}>
+                  {selected.quote ? (
+                    <>
+                      <div style={{ fontSize: 26, fontWeight: 700, fontFamily: 'var(--mono)' }}>{fi(selected.quote.ltp)}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, marginTop: 2, color: selected.quote.change >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                        {selected.quote.change >= 0 ? '▲' : '▼'} {selected.quote.change >= 0 ? '+' : ''}{selected.quote.change.toFixed(2)} ({selected.quote.change_pct >= 0 ? '+' : ''}{selected.quote.change_pct.toFixed(2)}%)
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>
+                      <span style={{ fontSize: 20, fontFamily: 'var(--mono)', color: 'var(--text-muted)' }}>···</span>
+                      <div style={{ fontSize: 11, marginTop: 4 }}>Fetching live price…</div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
                 <div style={{ height: 120 }}>
                   <Line key={selected.id} data={sparkData(selected)} options={sparkOpts as never} />
                 </div>
@@ -768,7 +790,7 @@ export default function StockTracker() {
                     { l: 'Qty held', v: `${selected.quantity} shares`, c: '' },
                     { l: 'Avg cost', v: fi(selected.avg_buy_price), c: '' },
                     { l: 'Invested', v: fL(selected.invested_value), c: '' },
-                    { l: 'Current',  v: fL(selected.current_value), c: 'var(--brand)' },
+                    { l: 'Current',  v: selected.quote && selected.quote.ltp > 0 ? fL(selected.current_value) : '···', c: 'var(--brand)' },
                   ].map(({ l, v, c }) => (
                     <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5 }}>
                       <span style={{ color: 'var(--text-secondary)' }}>{l}</span>
@@ -889,9 +911,24 @@ export default function StockTracker() {
                 )}
               </div>
               <div style={{ display: 'flex', gap: 20, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
-                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Invested: <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{fL(pnl.totalInvested)}</span></div>
-                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Current: <span style={{ color: 'var(--brand)', fontWeight: 600 }}>{pnl.currentValue !== pnl.totalInvested ? fL(pnl.currentValue) : 'Loading…'}</span></div>
-                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>P&L: <span style={{ color: pnl.totalPnL >= 0 ? 'var(--pos)' : 'var(--neg)', fontWeight: 600 }}>{pnl.currentValue !== pnl.totalInvested ? `${pnl.totalPnL >= 0 ? '+' : ''}${fL(pnl.totalPnL)} (${pnl.totalPnLPct >= 0 ? '+' : ''}${pnl.totalPnLPct.toFixed(2)}%)` : '—'}</span></div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                  Invested: <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{fL(pnl.totalInvested)}</span>
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                  Current: <span style={{ color: 'var(--brand)', fontWeight: 600 }}>
+                    {quotes.size > 0 ? fL(pnl.currentValue) : <span style={{ color: 'var(--text-muted)' }}>Fetching prices…</span>}
+                  </span>
+                </div>
+                {quotes.size > 0 && pnl.totalPnL !== 0 && (
+                  <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                    P&L: <span style={{ color: pnl.totalPnL >= 0 ? 'var(--pos)' : 'var(--neg)', fontWeight: 600 }}>
+                      {pnl.totalPnL >= 0 ? '+' : ''}{fL(pnl.totalPnL)} ({pnl.totalPnLPct >= 0 ? '+' : ''}{pnl.totalPnLPct.toFixed(2)}%)
+                    </span>
+                  </div>
+                )}
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                  {quotes.size}/{holdings.length} live prices loaded
+                </div>
               </div>
             </div>
           </div>
