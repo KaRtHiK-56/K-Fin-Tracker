@@ -486,7 +486,8 @@ export default function StockTracker() {
           <h1 className={styles.title}>Stock Tracker</h1>
           <p className={styles.sub}>
             NSE / BSE · Live prices
-            {updatedAt && <span className={styles.updated}> · Updated {updatedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>}
+            {quotes.size > 0 && <span className={styles.updated}> · {quotes.size}/{holdings.length} quotes loaded</span>}
+            {updatedAt && <span className={styles.updated}> · {updatedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>}
             {' '}
             <span style={{
               fontSize: 10.5, fontWeight: 600, padding: '1px 8px', borderRadius: 99,
@@ -540,7 +541,7 @@ export default function StockTracker() {
               { label: 'Invested',    val: fL(pnl.totalInvested), color: 'var(--text-primary)' },
               { label: 'Current',     val: fL(pnl.currentValue),  color: 'var(--brand)' },
               { label: 'Total P&L',   val: (pnl.totalPnL >= 0 ? '+' : '') + fL(pnl.totalPnL), sub: (pnl.totalPnLPct >= 0 ? '+' : '') + pnl.totalPnLPct.toFixed(1) + '%', color: pnl.totalPnL >= 0 ? 'var(--pos)' : 'var(--neg)' },
-              { label: isMarketOpen() ? "Today's P&L" : "Last Day P&L", val: (pnl.dayPnL >= 0 ? '+' : '') + fL(pnl.dayPnL), sub: (pnl.dayPnLPct >= 0 ? '+' : '') + pnl.dayPnLPct.toFixed(2) + '%', color: pnl.dayPnL >= 0 ? 'var(--pos)' : 'var(--neg)' },
+              { label: isMarketOpen() ? "Today's P&L" : "Last Session P&L", val: (pnl.dayPnL >= 0 ? '+' : '') + fL(pnl.dayPnL), sub: (pnl.dayPnLPct >= 0 ? '+' : '') + pnl.dayPnLPct.toFixed(2) + '%', color: pnl.dayPnL >= 0 ? 'var(--pos)' : 'var(--neg)' },
             ].map(c => (
               <div key={c.label} className={styles.sCard}>
                 <div className={styles.sLabel}>{c.label}</div>
