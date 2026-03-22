@@ -139,3 +139,13 @@
   .healthCard { grid-column: span 2; }
   .emptyHints { flex-direction: column; align-items: center; }
 }
+
+.importBtn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 9px 16px; border-radius: var(--r-md);
+  border: 1px solid var(--border-hover);
+  background: var(--brand-pale); color: var(--brand);
+  font-size: 13px; font-weight: 600; font-family: var(--font);
+  cursor: pointer; transition: var(--trans);
+}
+.importBtn:hover { background: var(--brand); color: #fff; }
