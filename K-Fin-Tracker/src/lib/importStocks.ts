@@ -38,7 +38,7 @@ const ISIN_MAP: Record<string, [string, string, string]> = {
   'INE216A01022': ['NESTLEIND',  'Nestle India Ltd',               'FMCG'],
   'INE285A01027': ['BRITANNIA',  'Britannia Industries Ltd',       'FMCG'],
   'INE036A01022': ['DABUR',      'Dabur India Ltd',                'FMCG'],
-  'INE079A01024': ['GODREJCP',   'Godrej Consumer Products',       'FMCG'],
+  'INE102D01028': ['GODREJCP',   'Godrej Consumer Products',       'FMCG'],
   // Auto
   'INE775A01035': ['MOTHERSON',  'Samvardhana Motherson Intl',     'Auto'],
   'INE1TAE01010': ['TATAMOTORS', 'Tata Motors Ltd',                'Auto'],
@@ -79,7 +79,6 @@ const ISIN_MAP: Record<string, [string, string, string]> = {
   'INE347G01014': ['PETRONET',   'Petronet LNG Ltd',               'Energy'],
   'INE752E01010': ['ADANIGREEN', 'Adani Green Energy Ltd',         'Energy'],
   'INE031A01017': ['POWERGRID',  'Power Grid Corp of India',       'Energy'],
-  'INE752E01010': ['ADANIGREEN', 'Adani Green Energy',             'Energy'],
   // Pharma
   'INE044A01036': ['SUNPHARMA',  'Sun Pharmaceutical Industries',  'Pharma'],
   'INE089A01023': ['DRREDDY',    'Dr Reddys Laboratories',         'Pharma'],
@@ -93,7 +92,7 @@ const ISIN_MAP: Record<string, [string, string, string]> = {
   'INE192A01025': ['HAVELLS',    'Havells India Ltd',              'Consumer'],
   // Cement
   'INE481G01011': ['ULTRACEMCO', 'UltraTech Cement Ltd',           'Cement'],
-  'INE070A01015': ['SHREECEM',   'Shree Cement Ltd',               'Cement'],
+  'INE070B01011': ['SHREECEM',   'Shree Cement Ltd',               'Cement'],
   'INE079A01024': ['AMBUJACEM',  'Ambuja Cements Ltd',             'Cement'],
   'INE012A01025': ['ACC',        'ACC Ltd',                        'Cement'],
   // Infrastructure / Conglomerate
@@ -106,8 +105,6 @@ const ISIN_MAP: Record<string, [string, string, string]> = {
   // Telecom
   'INE397D01024': ['BHARTIARTL', 'Bharti Airtel Ltd',              'Telecom'],
   'INE364U01010': ['IDEA',       'Vodafone Idea Ltd',              'Telecom'],
-  // Index / Misc
-  'INE002A01018': ['RELIANCE',   'Reliance Industries Ltd',        'Energy'],
 }
 
 // ─── Company Name → NSE Symbol fallback ───────────────────────────────────────
