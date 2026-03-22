@@ -243,24 +243,52 @@ export default function StockTracker() {
      timeRange or selected indices. Portfolio curve uses actual total return
      distributed evenly — deterministic, no random numbers.                  */
   const { benchmarkData, cumulativePortfolio, myReturn, beatingPrimary, primaryBenchReturn, nPts } = useMemo(() => {
-    const activeRets = ALL_INDICES['NIFTY50'].returns[timeRange] || ALL_INDICES['NIFTY50'].returns['1Y']
-    const n = activeRets.length
+    const baseRets = ALL_INDICES['NIFTY50'].returns[timeRange] || ALL_INDICES['NIFTY50'].returns['1Y']
+    const n = baseRets.length
     const labels = getMonthLabels(n)
 
-    // Portfolio curve: distribute actual total return evenly across periods
-    const invested = pnl.totalInvested || 100000
+    // ── Portfolio curve ──────────────────────────────────────────────────────
+    // Rebase portfolio to 100 using actual total return
+    // This makes it directly comparable to index values (all start at 100)
+    const invested = pnl.totalInvested || 0
     const current  = pnl.currentValue  || invested
     const totalReturnPct = invested > 0 ? ((current - invested) / invested) * 100 : 0
-    const perPeriodReturn = n > 1 ? totalReturnPct / (n - 1) : 0
 
-    const portReturns = Array.from({ length: n }, (_, i) =>
-      i === 0 ? 0 : +perPeriodReturn.toFixed(3)
-    )
-    const cumPort = toCumulative(portReturns)
-    const myRet = cumPort[cumPort.length - 1] - 100
+    // Build smooth curve: 100 at start, compounding to (100 + totalReturnPct) at end
+    const portFinal = 100 + totalReturnPct
+    const portData = Array.from({ length: n }, (_, i) => {
+      const t = n > 1 ? i / (n - 1) : 1
+      // Smooth exponential path from 100 to portFinal
+      return +(100 * Math.pow(portFinal / 100, t)).toFixed(2)
+    })
+
+    const myRet = portData[portData.length - 1] - 100
+
+    // ── Index curves ─────────────────────────────────────────────────────────
+    // All indices use their actual monthly return data, rebased to 100
+    const indexDatasets = benchmarkIndices.map(id => {
+      const idx = ALL_INDICES[id]
+      const rets = (idx.returns[timeRange] || idx.returns['1Y']).slice(0, n)
+      // Pad with last value if rets shorter than n
+      while (rets.length < n) rets.push(rets[rets.length - 1] || 0)
+      const cumData = toCumulative(rets)
+      return {
+        label: idx.label,
+        data: cumData,
+        borderColor: idx.color,
+        backgroundColor: 'transparent',
+        fill: false, tension: 0.4,
+        pointRadius: n > 24 ? 0 : 2,
+        borderWidth: 1.8,
+      }
+    })
 
     const primBenchRet = benchmarkIndices.length > 0
-      ? toCumulative((ALL_INDICES[benchmarkIndices[0]].returns[timeRange] || ALL_INDICES[benchmarkIndices[0]].returns['1Y']).slice(0, n)).slice(-1)[0] - 100
+      ? (() => {
+          const rets = (ALL_INDICES[benchmarkIndices[0]].returns[timeRange] || ALL_INDICES[benchmarkIndices[0]].returns['1Y']).slice(0, n)
+          while (rets.length < n) rets.push(rets[rets.length - 1] || 0)
+          return toCumulative(rets).slice(-1)[0] - 100
+        })()
       : 0
 
     return {
@@ -269,24 +297,17 @@ export default function StockTracker() {
         datasets: [
           {
             label: 'My Portfolio',
-            data: cumPort,
-            borderColor: '#8B5CF6', backgroundColor: 'rgba(139,92,246,0.07)',
-            fill: true, tension: 0.4, pointRadius: n > 24 ? 0 : 2, borderWidth: 2,
+            data: portData,
+            borderColor: '#8B5CF6',
+            backgroundColor: 'rgba(139,92,246,0.07)',
+            fill: true, tension: 0.4,
+            pointRadius: n > 24 ? 0 : 2,
+            borderWidth: 2.5,
           },
-          ...benchmarkIndices.map(id => {
-            const idx = ALL_INDICES[id]
-            const rets = (idx.returns[timeRange] || idx.returns['1Y']).slice(0, n)
-            return {
-              label: idx.label,
-              data: toCumulative(rets),
-              borderColor: idx.color, backgroundColor: 'transparent',
-              fill: false, tension: 0.4,
-              pointRadius: n > 24 ? 0 : 2, borderWidth: 1.8,
-            }
-          }),
+          ...indexDatasets,
         ],
       },
-      cumulativePortfolio: cumPort,
+      cumulativePortfolio: portData,
       myReturn: myRet,
       beatingPrimary: myRet > primBenchRet,
       primaryBenchReturn: primBenchRet,
@@ -907,8 +928,21 @@ export default function StockTracker() {
                   },
                   y: {
                     grid: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)' },
-                    ticks: { color: isDark ? '#6B6486' : '#8875B5', font: { size: 11 }, callback: (v) => Number(v).toFixed(0) },
-                    title: { display: true, text: 'Indexed (Base = 100)', color: isDark ? '#6B6486' : '#8875B5', font: { size: 10 } },
+                    // Show as % gain/loss from base 100
+                    ticks: {
+                      color: isDark ? '#6B6486' : '#8875B5',
+                      font: { size: 11 },
+                      callback: (v: string | number) => {
+                        const val = Number(v) - 100
+                        return (val >= 0 ? '+' : '') + val.toFixed(0) + '%'
+                      },
+                    },
+                    title: {
+                      display: true,
+                      text: 'Return (Base = 0%)',
+                      color: isDark ? '#6B6486' : '#8875B5',
+                      font: { size: 10 },
+                    },
                   },
                 },
                 plugins: {
@@ -918,8 +952,14 @@ export default function StockTracker() {
                   },
                   tooltip: {
                     callbacks: {
-                      label: (ctx) => ` ${ctx.dataset.label}: ${Number(ctx.raw).toFixed(2)} (${(Number(ctx.raw) - 100 >= 0 ? '+' : '')}${(Number(ctx.raw) - 100).toFixed(2)}%)`,
+                      title: (items) => items[0]?.label || '',
+                      label: (ctx) => {
+                        const ret = Number(ctx.raw) - 100
+                        return ` ${ctx.dataset.label}: ${ret >= 0 ? '+' : ''}${ret.toFixed(2)}%`
+                      },
                     },
+                    mode: 'index',
+                    intersect: false,
                   },
                 },
                 interaction: { mode: 'index', intersect: false },
