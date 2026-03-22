@@ -7,6 +7,9 @@ import {
 import {
   fetchMultipleQuotes, computePortfolioPnL, computeHealthScore,
   searchStocks, POPULAR_STOCKS, isMarketOpen,
+  fetchPortfolioHistory, fetchIndexHistory, rebaseTo100,
+  INDEX_TICKERS, INDEX_GROUPS, TIME_RANGES,
+  type HistPoint,
 } from '../../lib/stockApi'
 import type { StockHolding, StockWithQuote, LiveQuote, SortField, SortDir } from '../../types'
 import { useTheme } from '../../lib/ThemeContext'
@@ -24,47 +27,6 @@ const SECTOR_COLORS: Record<string, string> = {
 }
 const SECTORS = ['IT','Banking','Energy','Consumer','NBFC','Pharma','Auto','Travel','Cement','FMCG','Infrastructure','Other']
 
-/* ── Index definitions ──────────────────────────────────────────────────────── */
-const ALL_INDICES: Record<string, { label: string; color: string; returns: Record<string, number[]> }> = {
-  NIFTY50:    { label: 'Nifty 50',         color: '#06B6D4', returns: { '1M':[0.8],  '3M':[2.1,-1.4,3.8],  '6M':[2.1,-1.4,3.8,1.2,-0.8,4.1], '1Y':[2.1,-1.4,3.8,1.2,-0.8,4.1,2.7,-2.1,5.2,1.8,3.4,2.9], '3Y':[2.1,-1.4,3.8,1.2,-0.8,4.1,2.7,-2.1,5.2,1.8,3.4,2.9,1.5,2.3,-0.9,4.2,1.1,3.6,0.8,-1.2,2.4,3.1,-0.5,2.8,1.9,3.4,-1.1,2.6,0.7,4.8,1.3,-0.8,3.2,2.1,1.4,-0.6], '5Y':[2.1,-1.4,3.8,1.2,-0.8,4.1,2.7,-2.1,5.2,1.8,3.4,2.9,1.5,2.3,-0.9,4.2,1.1,3.6,0.8,-1.2,2.4,3.1,-0.5,2.8,1.9,3.4,-1.1,2.6,0.7,4.8,1.3,-0.8,3.2,2.1,1.4,-0.6,1.8,-2.3,4.1,1.0,2.8,3.5,-0.7,1.9,2.3,4.2,-1.3,2.0,3.1,0.9,1.4,3.8,-0.4,2.7,1.6,4.0,-0.9,2.5,3.3,1.1], 'ALL':[2.1,-1.4,3.8,1.2,-0.8,4.1,2.7,-2.1,5.2,1.8,3.4,2.9,1.5,2.3,-0.9,4.2,1.1,3.6,0.8,-1.2,2.4,3.1,-0.5,2.8,1.9,3.4,-1.1,2.6,0.7,4.8,1.3,-0.8,3.2,2.1,1.4,-0.6,1.8,-2.3,4.1,1.0,2.8,3.5,-0.7,1.9,2.3,4.2,-1.3,2.0,3.1,0.9,1.4,3.8,-0.4,2.7,1.6,4.0,-0.9,2.5,3.3,1.1,2.4,3.0,-0.8,1.7,2.9,4.3,-1.2,1.5,3.6,2.1,0.8,4.5] } },
-  NIFTYNXT50: { label: 'Nifty Next 50',    color: '#F59E0B', returns: { '1M':[1.1],  '3M':[2.8,-1.8,4.2],  '6M':[2.8,-1.8,4.2,1.5,-1.1,4.8], '1Y':[2.8,-1.8,4.2,1.5,-1.1,4.8,3.1,-2.5,6.1,2.1,4.0,3.4], '3Y':[2.8,-1.8,4.2,1.5,-1.1,4.8,3.1,-2.5,6.1,2.1,4.0,3.4,1.8,2.7,-1.1,5.0,1.3,4.2,0.9,-1.5,2.8,3.7,-0.6,3.3,2.2,4.0,-1.3,3.0,0.8,5.6,1.5,-0.9,3.7,2.4,1.7,-0.7], '5Y':[2.8,-1.8,4.2,1.5,-1.1,4.8,3.1,-2.5,6.1,2.1,4.0,3.4,1.8,2.7,-1.1,5.0,1.3,4.2,0.9,-1.5,2.8,3.7,-0.6,3.3,2.2,4.0,-1.3,3.0,0.8,5.6,1.5,-0.9,3.7,2.4,1.7,-0.7,2.1,-2.7,4.8,1.2,3.3,4.1,-0.8,2.2,2.7,4.9,-1.5,2.3,3.6,1.1,1.6,4.4,-0.5,3.1,1.9,4.7,-1.1,2.9,3.8,1.3], 'ALL':[2.8,-1.8,4.2,1.5,-1.1,4.8,3.1,-2.5,6.1,2.1,4.0,3.4,1.8,2.7,-1.1,5.0,1.3,4.2,0.9,-1.5,2.8,3.7,-0.6,3.3,2.2,4.0,-1.3,3.0,0.8,5.6,1.5,-0.9,3.7,2.4,1.7,-0.7,2.1,-2.7,4.8,1.2,3.3,4.1,-0.8,2.2,2.7,4.9,-1.5,2.3,3.6,1.1,1.6,4.4,-0.5,3.1,1.9,4.7,-1.1,2.9,3.8,1.3,2.8,3.5,-0.9,2.0,3.4,5.1,-1.4,1.8,4.2,2.5,0.9,5.3] } },
-  NIFTY100:   { label: 'Nifty 100',         color: '#10B981', returns: { '1M':[0.9],  '3M':[2.3,-1.5,4.0],  '6M':[2.3,-1.5,4.0,1.3,-0.9,4.3], '1Y':[2.3,-1.5,4.0,1.3,-0.9,4.3,2.9,-2.2,5.6,1.9,3.6,3.1], '3Y':[2.3,-1.5,4.0,1.3,-0.9,4.3,2.9,-2.2,5.6,1.9,3.6,3.1,1.6,2.4,-1.0,4.5,1.2,3.8,0.8,-1.3,2.5,3.3,-0.5,3.0,2.0,3.6,-1.2,2.7,0.7,5.1,1.4,-0.8,3.4,2.2,1.5,-0.6], '5Y':[2.3,-1.5,4.0,1.3,-0.9,4.3,2.9,-2.2,5.6,1.9,3.6,3.1,1.6,2.4,-1.0,4.5,1.2,3.8,0.8,-1.3,2.5,3.3,-0.5,3.0,2.0,3.6,-1.2,2.7,0.7,5.1,1.4,-0.8,3.4,2.2,1.5,-0.6,1.9,-2.4,4.3,1.1,3.0,3.7,-0.7,2.0,2.4,4.5,-1.4,2.1,3.3,1.0,1.5,4.0,-0.4,2.8,1.7,4.3,-1.0,2.7,3.5,1.2], 'ALL':[2.3,-1.5,4.0,1.3,-0.9,4.3,2.9,-2.2,5.6,1.9,3.6,3.1,1.6,2.4,-1.0,4.5,1.2,3.8,0.8,-1.3,2.5,3.3,-0.5,3.0,2.0,3.6,-1.2,2.7,0.7,5.1,1.4,-0.8,3.4,2.2,1.5,-0.6,1.9,-2.4,4.3,1.1,3.0,3.7,-0.7,2.0,2.4,4.5,-1.4,2.1,3.3,1.0,1.5,4.0,-0.4,2.8,1.7,4.3,-1.0,2.7,3.5,1.2,2.5,3.2,-0.8,1.8,3.1,4.6,-1.3,1.6,3.8,2.2,0.8,4.8] } },
-  NIFTY150:   { label: 'Nifty 150',         color: '#8B5CF6', returns: { '1M':[1.0],  '3M':[2.5,-1.6,4.1],  '6M':[2.5,-1.6,4.1,1.4,-1.0,4.5], '1Y':[2.5,-1.6,4.1,1.4,-1.0,4.5,3.0,-2.3,5.8,2.0,3.8,3.2], '3Y':[2.5,-1.6,4.1,1.4,-1.0,4.5,3.0,-2.3,5.8,2.0,3.8,3.2,1.7,2.5,-1.0,4.7,1.2,3.9,0.9,-1.4,2.6,3.5,-0.6,3.1,2.1,3.8,-1.2,2.8,0.8,5.3,1.4,-0.9,3.5,2.3,1.6,-0.7], '5Y':[2.5,-1.6,4.1,1.4,-1.0,4.5,3.0,-2.3,5.8,2.0,3.8,3.2,1.7,2.5,-1.0,4.7,1.2,3.9,0.9,-1.4,2.6,3.5,-0.6,3.1,2.1,3.8,-1.2,2.8,0.8,5.3,1.4,-0.9,3.5,2.3,1.6,-0.7,2.0,-2.5,4.5,1.1,3.1,3.9,-0.8,2.1,2.5,4.7,-1.4,2.2,3.4,1.0,1.5,4.1,-0.5,2.9,1.8,4.4,-1.0,2.8,3.6,1.2], 'ALL':[2.5,-1.6,4.1,1.4,-1.0,4.5,3.0,-2.3,5.8,2.0,3.8,3.2,1.7,2.5,-1.0,4.7,1.2,3.9,0.9,-1.4,2.6,3.5,-0.6,3.1,2.1,3.8,-1.2,2.8,0.8,5.3,1.4,-0.9,3.5,2.3,1.6,-0.7,2.0,-2.5,4.5,1.1,3.1,3.9,-0.8,2.1,2.5,4.7,-1.4,2.2,3.4,1.0,1.5,4.1,-0.5,2.9,1.8,4.4,-1.0,2.8,3.6,1.2,2.6,3.3,-0.9,1.9,3.2,4.8,-1.4,1.7,3.9,2.3,0.9,4.9] } },
-  NIFTYMID50: { label: 'Nifty Midcap 50',   color: '#F472B6', returns: { '1M':[1.3],  '3M':[3.2,-2.1,5.1],  '6M':[3.2,-2.1,5.1,1.9,-1.4,5.6], '1Y':[3.2,-2.1,5.1,1.9,-1.4,5.6,3.8,-3.1,7.2,2.6,4.8,4.1], '3Y':[3.2,-2.1,5.1,1.9,-1.4,5.6,3.8,-3.1,7.2,2.6,4.8,4.1,2.2,3.1,-1.4,5.8,1.6,5.0,1.1,-1.8,3.3,4.2,-0.8,3.9,2.6,4.5,-1.6,3.5,1.0,6.4,1.8,-1.1,4.3,2.8,2.0,-0.9], '5Y':[3.2,-2.1,5.1,1.9,-1.4,5.6,3.8,-3.1,7.2,2.6,4.8,4.1,2.2,3.1,-1.4,5.8,1.6,5.0,1.1,-1.8,3.3,4.2,-0.8,3.9,2.6,4.5,-1.6,3.5,1.0,6.4,1.8,-1.1,4.3,2.8,2.0,-0.9,2.5,-3.2,5.6,1.4,3.9,5.0,-1.0,2.7,3.2,5.8,-1.8,2.8,4.2,1.3,1.9,5.1,-0.6,3.7,2.3,5.4,-1.3,3.5,4.5,1.5], 'ALL':[3.2,-2.1,5.1,1.9,-1.4,5.6,3.8,-3.1,7.2,2.6,4.8,4.1,2.2,3.1,-1.4,5.8,1.6,5.0,1.1,-1.8,3.3,4.2,-0.8,3.9,2.6,4.5,-1.6,3.5,1.0,6.4,1.8,-1.1,4.3,2.8,2.0,-0.9,2.5,-3.2,5.6,1.4,3.9,5.0,-1.0,2.7,3.2,5.8,-1.8,2.8,4.2,1.3,1.9,5.1,-0.6,3.7,2.3,5.4,-1.3,3.5,4.5,1.5,3.1,3.9,-1.1,2.3,3.9,6.0,-1.7,2.1,4.7,2.8,1.1,6.1] } },
-  NIFTYMID100:{ label: 'Nifty Midcap 100',  color: '#FB923C', returns: { '1M':[1.4],  '3M':[3.4,-2.3,5.4],  '6M':[3.4,-2.3,5.4,2.0,-1.5,5.9], '1Y':[3.4,-2.3,5.4,2.0,-1.5,5.9,4.0,-3.3,7.6,2.8,5.1,4.3], '3Y':[3.4,-2.3,5.4,2.0,-1.5,5.9,4.0,-3.3,7.6,2.8,5.1,4.3,2.3,3.3,-1.5,6.1,1.7,5.3,1.2,-1.9,3.5,4.5,-0.8,4.1,2.7,4.8,-1.7,3.7,1.0,6.8,1.9,-1.2,4.6,3.0,2.1,-0.9], '5Y':[3.4,-2.3,5.4,2.0,-1.5,5.9,4.0,-3.3,7.6,2.8,5.1,4.3,2.3,3.3,-1.5,6.1,1.7,5.3,1.2,-1.9,3.5,4.5,-0.8,4.1,2.7,4.8,-1.7,3.7,1.0,6.8,1.9,-1.2,4.6,3.0,2.1,-0.9,2.6,-3.4,5.9,1.5,4.1,5.3,-1.0,2.8,3.4,6.1,-1.9,2.9,4.5,1.4,2.0,5.4,-0.6,3.9,2.4,5.7,-1.4,3.7,4.8,1.6], 'ALL':[3.4,-2.3,5.4,2.0,-1.5,5.9,4.0,-3.3,7.6,2.8,5.1,4.3,2.3,3.3,-1.5,6.1,1.7,5.3,1.2,-1.9,3.5,4.5,-0.8,4.1,2.7,4.8,-1.7,3.7,1.0,6.8,1.9,-1.2,4.6,3.0,2.1,-0.9,2.6,-3.4,5.9,1.5,4.1,5.3,-1.0,2.8,3.4,6.1,-1.9,2.9,4.5,1.4,2.0,5.4,-0.6,3.9,2.4,5.7,-1.4,3.7,4.8,1.6,3.3,4.1,-1.2,2.5,4.1,6.3,-1.8,2.2,5.0,3.0,1.1,6.5] } },
-  NIFTYSML100:{ label: 'Nifty Smallcap 100',color: '#34D399', returns: { '1M':[1.8],  '3M':[4.1,-2.9,6.5],  '6M':[4.1,-2.9,6.5,2.5,-2.0,7.2], '1Y':[4.1,-2.9,6.5,2.5,-2.0,7.2,5.0,-4.2,9.3,3.5,6.3,5.4], '3Y':[4.1,-2.9,6.5,2.5,-2.0,7.2,5.0,-4.2,9.3,3.5,6.3,5.4,2.9,4.1,-1.9,7.5,2.1,6.6,1.5,-2.4,4.4,5.5,-1.1,5.1,3.4,6.0,-2.1,4.6,1.3,8.4,2.4,-1.5,5.7,3.7,2.6,-1.2], '5Y':[4.1,-2.9,6.5,2.5,-2.0,7.2,5.0,-4.2,9.3,3.5,6.3,5.4,2.9,4.1,-1.9,7.5,2.1,6.6,1.5,-2.4,4.4,5.5,-1.1,5.1,3.4,6.0,-2.1,4.6,1.3,8.4,2.4,-1.5,5.7,3.7,2.6,-1.2,3.2,-4.2,7.3,1.9,5.1,6.5,-1.3,3.5,4.2,7.5,-2.4,3.6,5.6,1.7,2.5,6.6,-0.8,4.8,3.0,7.1,-1.7,4.5,5.9,2.0], 'ALL':[4.1,-2.9,6.5,2.5,-2.0,7.2,5.0,-4.2,9.3,3.5,6.3,5.4,2.9,4.1,-1.9,7.5,2.1,6.6,1.5,-2.4,4.4,5.5,-1.1,5.1,3.4,6.0,-2.1,4.6,1.3,8.4,2.4,-1.5,5.7,3.7,2.6,-1.2,3.2,-4.2,7.3,1.9,5.1,6.5,-1.3,3.5,4.2,7.5,-2.4,3.6,5.6,1.7,2.5,6.6,-0.8,4.8,3.0,7.1,-1.7,4.5,5.9,2.0,4.0,5.1,-1.5,3.1,5.1,7.8,-2.2,2.7,6.1,3.7,1.4,8.0] } },
-  NIFTYSML250:{ label: 'Nifty Smallcap 250',color: '#60A5FA', returns: { '1M':[2.0],  '3M':[4.5,-3.2,7.1],  '6M':[4.5,-3.2,7.1,2.8,-2.2,7.9], '1Y':[4.5,-3.2,7.1,2.8,-2.2,7.9,5.5,-4.6,10.2,3.8,6.9,5.9], '3Y':[4.5,-3.2,7.1,2.8,-2.2,7.9,5.5,-4.6,10.2,3.8,6.9,5.9,3.2,4.5,-2.1,8.2,2.3,7.2,1.7,-2.6,4.8,6.0,-1.2,5.6,3.7,6.6,-2.3,5.0,1.4,9.2,2.6,-1.6,6.2,4.0,2.8,-1.3], '5Y':[4.5,-3.2,7.1,2.8,-2.2,7.9,5.5,-4.6,10.2,3.8,6.9,5.9,3.2,4.5,-2.1,8.2,2.3,7.2,1.7,-2.6,4.8,6.0,-1.2,5.6,3.7,6.6,-2.3,5.0,1.4,9.2,2.6,-1.6,6.2,4.0,2.8,-1.3,3.5,-4.6,8.0,2.1,5.6,7.1,-1.4,3.8,4.6,8.2,-2.6,3.9,6.1,1.9,2.7,7.2,-0.9,5.3,3.3,7.7,-1.9,4.9,6.5,2.2], 'ALL':[4.5,-3.2,7.1,2.8,-2.2,7.9,5.5,-4.6,10.2,3.8,6.9,5.9,3.2,4.5,-2.1,8.2,2.3,7.2,1.7,-2.6,4.8,6.0,-1.2,5.6,3.7,6.6,-2.3,5.0,1.4,9.2,2.6,-1.6,6.2,4.0,2.8,-1.3,3.5,-4.6,8.0,2.1,5.6,7.1,-1.4,3.8,4.6,8.2,-2.6,3.9,6.1,1.9,2.7,7.2,-0.9,5.3,3.3,7.7,-1.9,4.9,6.5,2.2,4.4,5.6,-1.7,3.4,5.6,8.5,-2.4,3.0,6.7,4.1,1.5,8.8] } },
-}
-
-const TIME_RANGES = [
-  { id: '1M', label: '1M' }, { id: '3M', label: '3M' }, { id: '6M', label: '6M' },
-  { id: '1Y', label: '1Y' }, { id: '3Y', label: '3Y' }, { id: '5Y', label: '5Y' },
-  { id: 'ALL', label: 'All' },
-]
-
-const INDEX_GROUPS = [
-  { group: 'Broad Market',  ids: ['NIFTY50','NIFTYNXT50','NIFTY100','NIFTY150'] },
-  { group: 'Midcap',        ids: ['NIFTYMID50','NIFTYMID100'] },
-  { group: 'Smallcap',      ids: ['NIFTYSML100','NIFTYSML250'] },
-]
-
-function toCumulative(returns: number[]): number[] {
-  return returns.reduce((acc, v, i) => {
-    acc.push(+((i === 0 ? 100 : acc[i-1]) * (1 + v/100)).toFixed(2))
-    return acc
-  }, [] as number[])
-}
-
-function getMonthLabels(n: number): string[] {
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-  const result: string[] = []
-  const now = new Date()
-  for (let i = n - 1; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-    result.push(months[d.getMonth()] + (i % 12 === 0 || n > 24 ? ' ' + String(d.getFullYear()).slice(2) : ''))
-  }
-  return result
-}
 
 /* ── Health score tooltip content ──────────────────────────────────────────── */
 const HEALTH_INFO = {
@@ -121,7 +83,13 @@ export default function StockTracker() {
   const [searchQ,    setSearchQ]    = useState('')
   const [searchRes,  setSearchRes]  = useState<typeof POPULAR_STOCKS>([])
   const [dropOpen,   setDropOpen]   = useState(false)
-  const [showHealthInfo, setShowHealthInfo] = useState(false)
+  const [showHealthInfo,   setShowHealthInfo]   = useState(false)
+  const [benchmarkIndices, setBenchmarkIndices] = useState<string[]>(['NIFTY50'])
+  const [timeRange,        setTimeRange]        = useState('1Y')
+  const [portfolioHistory, setPortfolioHistory] = useState<HistPoint[]>([])
+  const [indexHistories,   setIndexHistories]   = useState<Record<string, HistPoint[]>>({})
+  const [histLoading,      setHistLoading]      = useState(false)
+  const [histError,        setHistError]        = useState<string | null>(null)
   const [benchmarkIndices, setBenchmarkIndices] = useState<string[]>(['NIFTY50'])
   const [timeRange, setTimeRange] = useState('1Y')
   const healthRef = useRef<HTMLDivElement>(null)
@@ -164,6 +132,42 @@ export default function StockTracker() {
     return () => clearInterval(id)
   }, [holdings, loadQuotes])
 
+  /* ── Fetch real historical data whenever holdings/timeRange/indices change ── */
+  useEffect(() => {
+    if (!holdings.length) return
+
+    const tr = TIME_RANGES.find(r => r.id === timeRange) || TIME_RANGES[3]
+    const { period, interval } = tr
+
+    setHistLoading(true)
+    setHistError(null)
+
+    ;(async () => {
+      try {
+        // All fetches in parallel: portfolio + every selected index
+        const [portHist, ...indexHists] = await Promise.all([
+          fetchPortfolioHistory(holdings, period, interval),
+          ...benchmarkIndices.map(id => fetchIndexHistory(id, period, interval)),
+        ])
+
+        setPortfolioHistory(portHist)
+
+        const newIdx: Record<string, HistPoint[]> = {}
+        benchmarkIndices.forEach((id, i) => { newIdx[id] = indexHists[i] || [] })
+        setIndexHistories(newIdx)
+
+        if (portHist.length === 0) {
+          setHistError('Price history unavailable for some holdings. Live P&L still accurate.')
+        }
+      } catch {
+        setHistError('Could not load historical data.')
+      } finally {
+        setHistLoading(false)
+      }
+    })()
+  }, [holdings.map(h=>h.symbol).join(','), timeRange, benchmarkIndices.join(',')]
+  )
+
   /* ── Enrich holdings with live data ── */
   const enrich = (h: StockHolding): StockWithQuote => {
     try {
@@ -204,92 +208,90 @@ export default function StockTracker() {
   enriched.forEach(h => sectorMap.set(h.sector || 'Other', (sectorMap.get(h.sector || 'Other') || 0) + h.current_value))
   const sectorEntries = [...sectorMap.entries()].sort((a, b) => b[1] - a[1])
 
-  /* ── P&L line chart — stable, based on real invested/current values ──
-     Uses useMemo so it ONLY recomputes when actual portfolio data changes,
-     not on every render/refresh. Fake data is seeded from real values.       */
+  /* ── P&L growth chart — real portfolio value history ── */
   const pnlLineData = useMemo(() => {
-    const months = getMonthLabels(12)
     const invested = pnl.totalInvested || 0
-    const current  = pnl.currentValue  || 0
-    if (invested === 0) return { labels: months, datasets: [] }
+    if (!portfolioHistory.length || invested === 0) return null
 
-    // Build a smooth curve from invested → current over 12 months
-    // Uses a deterministic growth curve — no Math.random()
-    const growthRate = current > 0 ? Math.pow(current / invested, 1 / 11) - 1 : 0.016
+    const fmt = portfolioHistory.length > 90
+      ? (d: string) => new Date(d).toLocaleDateString('en-IN', { month:'short', year:'2-digit' })
+      : (d: string) => new Date(d).toLocaleDateString('en-IN', { day:'2-digit', month:'short' })
+
     return {
-      labels: months,
+      labels: portfolioHistory.map(p => fmt(p.date)),
       datasets: [
         {
-          label: 'My Portfolio',
-          data: months.map((_, i) => +(invested * Math.pow(1 + growthRate, i)).toFixed(0)),
+          label: 'Portfolio Value (₹)',
+          data:  portfolioHistory.map(p => p.close),
           borderColor: '#8B5CF6',
           backgroundColor: 'rgba(139,92,246,0.08)',
-          fill: true, tension: 0.4, pointRadius: 3,
-          pointBackgroundColor: '#8B5CF6', borderWidth: 2,
+          fill: true, tension: 0.4,
+          pointRadius: portfolioHistory.length > 60 ? 0 : 3,
+          borderWidth: 2,
         },
         {
-          label: 'Invested',
-          data: months.map(() => invested),
-          borderColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)',
+          label: `Invested (₹${(invested/1000).toFixed(0)}K)`,
+          data:  portfolioHistory.map(() => invested),
+          borderColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)',
           backgroundColor: 'transparent',
-          fill: false, tension: 0.4, pointRadius: 0,
-          borderDash: [5, 4], borderWidth: 1.5,
+          fill: false, tension: 0, pointRadius: 0,
+          borderDash: [6, 4], borderWidth: 1.5,
         },
       ],
     }
-  }, [pnl.totalInvested, pnl.currentValue, isDark])
+  }, [portfolioHistory, pnl.totalInvested, isDark])
 
   /* ── Benchmark comparison — useMemo, only recomputes when user changes
      timeRange or selected indices. Portfolio curve uses actual total return
      distributed evenly — deterministic, no random numbers.                  */
-  const { benchmarkData, cumulativePortfolio, myReturn, beatingPrimary, primaryBenchReturn, nPts } = useMemo(() => {
-    const baseRets = ALL_INDICES['NIFTY50'].returns[timeRange] || ALL_INDICES['NIFTY50'].returns['1Y']
-    const n = baseRets.length
-    const labels = getMonthLabels(n)
+  /* ── Benchmark comparison — all real data rebased to 100 ── */
+  const { benchmarkData, myReturn, beatingPrimary } = useMemo(() => {
+    const empty = { benchmarkData: { labels: [] as string[], datasets: [] }, myReturn: 0, beatingPrimary: false }
+    if (!portfolioHistory.length) return empty
 
-    // ── Portfolio curve ──────────────────────────────────────────────────────
-    // Rebase portfolio to 100 using actual total return
-    // This makes it directly comparable to index values (all start at 100)
-    const invested = pnl.totalInvested || 0
-    const current  = pnl.currentValue  || invested
-    const totalReturnPct = invested > 0 ? ((current - invested) / invested) * 100 : 0
+    // Rebase portfolio: first point = 100
+    const portRebased = rebaseTo100(portfolioHistory)
+    if (!portRebased.length) return empty
 
-    // Build smooth curve: 100 at start, compounding to (100 + totalReturnPct) at end
-    const portFinal = 100 + totalReturnPct
-    const portData = Array.from({ length: n }, (_, i) => {
-      const t = n > 1 ? i / (n - 1) : 1
-      // Smooth exponential path from 100 to portFinal
-      return +(100 * Math.pow(portFinal / 100, t)).toFixed(2)
-    })
+    const fmt = portRebased.length > 90
+      ? (d: string) => new Date(d).toLocaleDateString('en-IN', { month:'short', year:'2-digit' })
+      : (d: string) => new Date(d).toLocaleDateString('en-IN', { day:'2-digit', month:'short' })
 
-    const myRet = portData[portData.length - 1] - 100
+    const labels = portRebased.map(p => fmt(p.date))
+    const myRet  = (portRebased[portRebased.length - 1]?.close || 100) - 100
 
-    // ── Index curves ─────────────────────────────────────────────────────────
-    // All indices use their actual monthly return data, rebased to 100
-    const indexDatasets = benchmarkIndices.map(id => {
-      const idx = ALL_INDICES[id]
-      const rets = (idx.returns[timeRange] || idx.returns['1Y']).slice(0, n)
-      // Pad with last value if rets shorter than n
-      while (rets.length < n) rets.push(rets[rets.length - 1] || 0)
-      const cumData = toCumulative(rets)
-      return {
-        label: idx.label,
-        data: cumData,
-        borderColor: idx.color,
-        backgroundColor: 'transparent',
-        fill: false, tension: 0.4,
-        pointRadius: n > 24 ? 0 : 2,
-        borderWidth: 1.8,
-      }
-    })
+    // For each index: rebase to 100 from its own first date
+    // Then align to portfolio dates (use nearest available value)
+    const indexDatasets = benchmarkIndices
+      .filter(id => (indexHistories[id]?.length || 0) > 0)
+      .map(id => {
+        const idx      = INDEX_TICKERS[id]
+        const rebased  = rebaseTo100(indexHistories[id])
+        const idxMap   = new Map(rebased.map(p => [p.date, p.close]))
 
-    const primBenchRet = benchmarkIndices.length > 0
-      ? (() => {
-          const rets = (ALL_INDICES[benchmarkIndices[0]].returns[timeRange] || ALL_INDICES[benchmarkIndices[0]].returns['1Y']).slice(0, n)
-          while (rets.length < n) rets.push(rets[rets.length - 1] || 0)
-          return toCumulative(rets).slice(-1)[0] - 100
-        })()
-      : 0
+        // Align index to portfolio dates — fill forward if date missing
+        const aligned: number[] = []
+        let lastVal = 100
+        for (const { date } of portRebased) {
+          const v = idxMap.get(date)
+          if (v !== undefined) { lastVal = v; aligned.push(v) }
+          else { aligned.push(lastVal) }  // fill forward
+        }
+
+        return {
+          label: idx.label,
+          data:  aligned,
+          borderColor: idx.color,
+          backgroundColor: 'transparent',
+          fill: false, tension: 0.4,
+          pointRadius: portRebased.length > 60 ? 0 : 2,
+          borderWidth: 1.8,
+        }
+      })
+
+    const primaryIdx   = benchmarkIndices.find(id => indexHistories[id]?.length > 0)
+    const primaryRet   = primaryIdx
+      ? (rebaseTo100(indexHistories[primaryIdx]).slice(-1)[0]?.close || 100) - 100 : 0
 
     return {
       benchmarkData: {
@@ -297,23 +299,20 @@ export default function StockTracker() {
         datasets: [
           {
             label: 'My Portfolio',
-            data: portData,
+            data:  portRebased.map(p => p.close),
             borderColor: '#8B5CF6',
             backgroundColor: 'rgba(139,92,246,0.07)',
             fill: true, tension: 0.4,
-            pointRadius: n > 24 ? 0 : 2,
+            pointRadius: portRebased.length > 60 ? 0 : 2,
             borderWidth: 2.5,
           },
           ...indexDatasets,
         ],
       },
-      cumulativePortfolio: portData,
       myReturn: myRet,
-      beatingPrimary: myRet > primBenchRet,
-      primaryBenchReturn: primBenchRet,
-      nPts: n,
+      beatingPrimary: myRet > primaryRet,
     }
-  }, [timeRange, benchmarkIndices, pnl.totalInvested, pnl.currentValue])
+  }, [portfolioHistory, indexHistories, benchmarkIndices])
 
   const lineOpts = (yLabel: string) => ({
     responsive: true, maintainAspectRatio: false,
@@ -828,7 +827,18 @@ export default function StockTracker() {
                 </div>
               </div>
               <div style={{ height: 220 }}>
-                <Line data={pnlLineData} options={lineOpts('₹') as never} />
+                {histLoading ? (
+                  <div style={{ height:'100%', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:8, color:'var(--text-tertiary)', fontSize:13 }}>
+                    <div style={{ animation:'spin .8s linear infinite', fontSize:22 }}>⚙</div>
+                    Loading price history…
+                  </div>
+                ) : !pnlLineData ? (
+                  <div style={{ height:'100%', display:'flex', alignItems:'center', justifyContent:'center', color:'var(--text-tertiary)', fontSize:13 }}>
+                    Price history unavailable — live P&amp;L still shown above
+                  </div>
+                ) : (
+                  <Line data={pnlLineData} options={lineOpts('₹') as never} />
+                )}
               </div>
               <div style={{ display: 'flex', gap: 16, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Total P&L: <span style={{ color: pnl.totalPnL >= 0 ? 'var(--pos)' : 'var(--neg)', fontWeight: 600 }}>{pnl.totalPnL >= 0 ? '+' : ''}{fL(pnl.totalPnL)} ({pnl.totalPnLPct >= 0 ? '+' : ''}{pnl.totalPnLPct.toFixed(1)}%)</span></div>
@@ -850,15 +860,17 @@ export default function StockTracker() {
                   Rebased to 100 · select indices and time range to compare
                 </div>
               </div>
-              <div style={{
-                padding: '6px 14px', borderRadius: 99, fontSize: 12, fontWeight: 600,
-                background: beatingPrimary ? 'var(--pos-bg)' : 'var(--neg-bg)',
-                color: beatingPrimary ? 'var(--pos)' : 'var(--neg)',
-              }}>
-                {beatingPrimary
-                  ? `🏆 Beating ${benchmarkIndices.length > 0 ? ALL_INDICES[benchmarkIndices[0]].label : 'Benchmark'}`
-                  : `📉 Lagging ${benchmarkIndices.length > 0 ? ALL_INDICES[benchmarkIndices[0]].label : 'Benchmark'}`}
-              </div>
+              {portfolioHistory.length > 0 && (
+                <div style={{
+                  padding: '6px 14px', borderRadius: 99, fontSize: 12, fontWeight: 600,
+                  background: beatingPrimary ? 'var(--pos-bg)' : 'var(--neg-bg)',
+                  color: beatingPrimary ? 'var(--pos)' : 'var(--neg)',
+                }}>
+                  {beatingPrimary
+                    ? `🏆 Beating ${benchmarkIndices.length > 0 ? INDEX_TICKERS[benchmarkIndices[0]]?.label : 'Benchmark'}`
+                    : `📉 Lagging ${benchmarkIndices.length > 0 ? INDEX_TICKERS[benchmarkIndices[0]]?.label : 'Benchmark'}`}
+                </div>
+              )}
             </div>
 
             {/* ── TIME RANGE SELECTOR ── */}
@@ -888,7 +900,7 @@ export default function StockTracker() {
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {group.ids.map(id => {
-                      const idx = ALL_INDICES[id]
+                      const idx = INDEX_TICKERS[id]
                       const active = benchmarkIndices.includes(id)
                       return (
                         <button key={id}
@@ -918,6 +930,18 @@ export default function StockTracker() {
             </div>
 
             {/* ── CHART ── */}
+            {histLoading && (
+              <div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10 }}>
+                <div style={{ fontSize: 24, animation: 'spin .8s linear infinite', display: 'inline-block' }}>⚙</div>
+                <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>Fetching real market data…</div>
+              </div>
+            )}
+            {histError && (
+              <div style={{ padding: '12px 14px', background: 'var(--gold-bg)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 10, fontSize: 12.5, color: 'var(--gold)', marginBottom: 12 }}>
+                ⚠ {histError}
+              </div>
+            )}
+            {!histLoading && (
             <div style={{ height: 300 }}>
               <Line data={benchmarkData} options={{
                 responsive: true, maintainAspectRatio: false,
@@ -967,37 +991,38 @@ export default function StockTracker() {
             </div>
 
             {/* ── COMPARISON STAT CARDS ── */}
-            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(1 + benchmarkIndices.length, 4)}, 1fr)`, gap: 10, marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
-              {/* My portfolio card */}
-              <div style={{ background: 'var(--bg-tertiary)', borderRadius: 12, padding: '12px 14px', borderLeft: '3px solid #8B5CF6' }}>
-                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>My Portfolio</div>
-                <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--mono)', color: myReturn >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
-                  {myReturn >= 0 ? '+' : ''}{myReturn.toFixed(2)}%
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{timeRange} return</div>
-              </div>
-              {/* Index cards */}
-              {benchmarkIndices.map(id => {
-                const idx = ALL_INDICES[id]
-                const rets = idx.returns[timeRange] || idx.returns['1Y']
-                const cum = toCumulative(rets)
-                const ret = cum[cum.length - 1] - 100
-                const alpha = myReturn - ret
-                return (
-                  <div key={id} style={{ background: 'var(--bg-tertiary)', borderRadius: 12, padding: '12px 14px', borderLeft: `3px solid ${idx.color}` }}>
-                    <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>{idx.label}</div>
-                    <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--mono)', color: ret >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
-                      {ret >= 0 ? '+' : ''}{ret.toFixed(2)}%
-                    </div>
-                    <div style={{ fontSize: 11, marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <span style={{ color: alpha >= 0 ? 'var(--pos)' : 'var(--neg)', fontWeight: 600 }}>
-                        {alpha >= 0 ? '▲' : '▼'} Alpha: {alpha >= 0 ? '+' : ''}{alpha.toFixed(2)}%
-                      </span>
-                    </div>
+            {portfolioHistory.length > 0 && (
+              <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(1 + benchmarkIndices.filter(id => indexHistories[id]?.length).length, 4)}, 1fr)`, gap: 10, marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+                {/* My portfolio card */}
+                <div style={{ background: 'var(--bg-tertiary)', borderRadius: 12, padding: '12px 14px', borderLeft: '3px solid #8B5CF6' }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>My Portfolio</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--mono)', color: myReturn >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                    {myReturn >= 0 ? '+' : ''}{myReturn.toFixed(2)}%
                   </div>
-                )
-              })}
-            </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{timeRange} return (real)</div>
+                </div>
+                {/* Index cards — only show indices with real data */}
+                {benchmarkIndices.filter(id => (indexHistories[id]?.length || 0) > 0).map(id => {
+                  const idx = INDEX_TICKERS[id]
+                  const rebased = rebaseTo100(indexHistories[id] || [])
+                  const ret = rebased.length > 0 ? (rebased[rebased.length - 1]?.close || 100) - 100 : 0
+                  const alpha = myReturn - ret
+                  return (
+                    <div key={id} style={{ background: 'var(--bg-tertiary)', borderRadius: 12, padding: '12px 14px', borderLeft: `3px solid ${idx.color}` }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>{idx.label}</div>
+                      <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--mono)', color: ret >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                        {ret >= 0 ? '+' : ''}{ret.toFixed(2)}%
+                      </div>
+                      <div style={{ fontSize: 11, marginTop: 4 }}>
+                        <span style={{ color: alpha >= 0 ? 'var(--pos)' : 'var(--neg)', fontWeight: 600 }}>
+                          {alpha >= 0 ? '▲' : '▼'} Alpha {alpha >= 0 ? '+' : ''}{alpha.toFixed(2)}%
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
 
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10, padding: '8px 0 0', borderTop: '1px solid var(--border)', lineHeight: 1.6 }}>
               ⚠ Index returns are indicative based on historical monthly data. Portfolio returns derived from live prices. Connect to NSE/BSE data feed for real-time index tracking.
