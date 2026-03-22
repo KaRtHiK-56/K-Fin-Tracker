@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Line, Doughnut } from 'react-chartjs-2'
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement,
