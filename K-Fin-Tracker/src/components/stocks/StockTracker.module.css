@@ -1,5 +1,6 @@
-.page { padding: 24px; display: flex; flex-direction: column; gap: 18px; }
+.page { padding: 24px; display: flex; flex-direction: column; gap: 20px; }
 
+/* ── Header ── */
 .header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .title  { font-size: 21px; font-weight: 700; letter-spacing: -.4px; color: var(--text-primary); }
 .sub    { font-size: 12px; color: var(--text-tertiary); margin-top: 3px; }
@@ -26,24 +27,54 @@
 }
 .addBtn:hover { filter: brightness(1.1); }
 
-.strip {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 12px;
+/* ── Empty state ── */
+.emptyState {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; padding: 80px 24px;
+  background: var(--bg-card); border: 1px dashed var(--border-hover);
+  border-radius: var(--r-xl); text-align: center;
+  gap: 14px;
+}
+.emptyIcon { font-size: 56px; line-height: 1; }
+.emptyTitle { font-size: 20px; font-weight: 700; color: var(--text-primary); }
+.emptyDesc { font-size: 14px; color: var(--text-secondary); line-height: 1.7; max-width: 420px; }
+.emptyBtn {
+  padding: 11px 28px; border-radius: var(--r-md);
+  background: var(--brand); border: none; color: #fff;
+  font-size: 14px; font-weight: 600; font-family: var(--font);
+  cursor: pointer; transition: var(--trans);
+  box-shadow: 0 0 20px var(--brand-glow);
+  margin-top: 4px;
+}
+.emptyBtn:hover { filter: brightness(1.1); }
+.emptyHints {
+  display: flex; gap: 12px; flex-wrap: wrap;
+  justify-content: center; margin-top: 8px;
+}
+.hint {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12.5px; color: var(--text-tertiary);
+  background: var(--bg-tertiary); border: 1px solid var(--border);
+  padding: 6px 14px; border-radius: var(--r-full);
 }
 
+/* ── Summary strip ── */
+.strip {
+  display: grid; grid-template-columns: repeat(5, 1fr);
+  gap: 12px; position: relative;
+}
 .sCard {
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: var(--r-xl); padding: 15px 17px;
-  transition: var(--trans);
+  transition: var(--trans); position: relative;
 }
 .sCard:hover { border-color: var(--border-hover); }
-.healthCard  { background: var(--brand-pale); border-color: var(--border-hover); }
-
+.healthCard { background: var(--brand-pale); border-color: var(--border-hover); }
 .sLabel { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--text-tertiary); margin-bottom: 7px; }
 .sVal   { font-size: 18px; font-weight: 700; font-family: var(--mono); letter-spacing: -.3px; }
 .healthRow { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
 
+/* ── Body (table + detail panel) ── */
 .body { display: flex; gap: 14px; align-items: flex-start; }
 
 .tableCard {
@@ -51,12 +82,10 @@
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: var(--r-xl); overflow: hidden;
 }
-
 .tableTop {
   display: flex; align-items: center; gap: 10px;
   padding: 13px 16px; border-bottom: 1px solid var(--border);
 }
-
 .searchWrap {
   flex: 1; display: flex; align-items: center; gap: 8px;
   background: var(--inp-bg); border: 1px solid var(--inp-border);
@@ -64,11 +93,12 @@
   transition: var(--trans);
 }
 .searchWrap:focus-within { border-color: var(--brand); }
-.searchIco   { color: var(--text-tertiary); font-size: 13px; }
+.searchIco { color: var(--text-tertiary); font-size: 13px; }
 .searchInput { flex: 1; border: none; outline: none; background: transparent; font-size: 13px; font-family: var(--font); color: var(--text-primary); }
 .searchInput::placeholder { color: var(--text-muted); }
 .hCount { font-size: 12px; color: var(--text-tertiary); flex-shrink: 0; }
 
+/* ── Detail panel ── */
 .detail {
   width: 268px; flex-shrink: 0;
   background: var(--bg-card); border: 1px solid var(--border);
@@ -78,12 +108,34 @@
   position: sticky; top: 20px;
 }
 
-@media (max-width: 1100px) {
+/* ── Charts ── */
+.chartsRow {
+  display: grid; grid-template-columns: 1fr 1.4fr;
+  gap: 16px;
+}
+.chartCard {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--r-xl); padding: 20px;
+}
+.chartCardFull {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--r-xl); padding: 20px;
+}
+.chartHead {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; margin-bottom: 18px; flex-wrap: wrap;
+}
+.chartTitle { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+
+/* ── Responsive ── */
+@media (max-width: 1200px) {
   .strip { grid-template-columns: repeat(3, 1fr); }
   .detail { display: none; }
+  .chartsRow { grid-template-columns: 1fr; }
 }
 @media (max-width: 700px) {
-  .page  { padding: 14px; }
+  .page { padding: 14px; }
   .strip { grid-template-columns: repeat(2, 1fr); }
   .healthCard { grid-column: span 2; }
+  .emptyHints { flex-direction: column; align-items: center; }
 }
