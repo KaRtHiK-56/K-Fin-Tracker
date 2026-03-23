@@ -1,7 +1,10 @@
 // ─── K-Fin Tracker — Stock & Index Data Layer ────────────────────────────────
-// Live quotes:  NSE proxy (military-jobye-haiqstudios-14f59639.koyeb.app)
-// Historical:   Yahoo Finance v8 via multiple CORS proxies (fallback chain)
-// RULE: Zero fabricated data. If fetch fails → return null / [].
+// Strategy: Try multiple free sources in order until one works.
+// Source 1: Yahoo Finance v7 (quote summary) via allorigins CORS proxy
+// Source 2: Yahoo Finance v8 (chart) via corsproxy.io
+// Source 3: The Koyeb NSE proxy (fallback)
+// Historical: Yahoo Finance v8 chart API via CORS proxy chain
+// RULE: Zero fabricated data. null/[] on failure, never invented numbers.
 
 import type { StockHolding, LiveQuote, HealthScore } from '../types'
 
@@ -20,20 +23,22 @@ export function isMarketOpen(): boolean {
   return day >= 1 && day <= 5 && mins >= 555 && mins <= 930
 }
 
-// ─── In-memory cache ──────────────────────────────────────────────────────────
+// ─── Cache ────────────────────────────────────────────────────────────────────
 const quoteCache = new Map<string, { data: LiveQuote; ts: number }>()
 const histCache  = new Map<string, { data: HistPoint[]; ts: number }>()
+const QUOTE_TTL  = () => isMarketOpen() ? 60_000 : 4 * 3600_000
+const HIST_TTL   = 6 * 3600_000
 
 // ─── Index definitions ────────────────────────────────────────────────────────
 export const INDEX_TICKERS: Record<string, { label: string; yahoo: string; color: string }> = {
-  NIFTY50:     { label: 'Nifty 50',           yahoo: '%5ENSEI',      color: '#06B6D4' },
-  NIFTYNXT50:  { label: 'Nifty Next 50',      yahoo: '%5ENSMIDCP',   color: '#F59E0B' },
-  NIFTY100:    { label: 'Nifty 100',          yahoo: '%5ECNX100',    color: '#10B981' },
-  NIFTY150:    { label: 'Nifty 150',          yahoo: '%5ENSEI',      color: '#8B5CF6' },
-  NIFTYMID50:  { label: 'Nifty Midcap 50',   yahoo: '%5ENISEMDCP50',color: '#F472B6' },
-  NIFTYMID100: { label: 'Nifty Midcap 100',  yahoo: '%5ECNXMDCP100',color: '#FB923C' },
-  NIFTYSML100: { label: 'Nifty Smallcap 100',yahoo: '%5ECNXSC',     color: '#34D399' },
-  NIFTYSML250: { label: 'Nifty Smallcap 250',yahoo: '%5ECNXSC250',  color: '#60A5FA' },
+  NIFTY50:     { label: 'Nifty 50',           yahoo: '^NSEI',       color: '#06B6D4' },
+  NIFTYNXT50:  { label: 'Nifty Next 50',      yahoo: '^NSMIDCP',    color: '#F59E0B' },
+  NIFTY100:    { label: 'Nifty 100',          yahoo: '^CNX100',     color: '#10B981' },
+  NIFTY150:    { label: 'Nifty 150',          yahoo: '^NSEI',       color: '#8B5CF6' },
+  NIFTYMID50:  { label: 'Nifty Midcap 50',   yahoo: '^NSEMDCP50',  color: '#F472B6' },
+  NIFTYMID100: { label: 'Nifty Midcap 100',  yahoo: '^CNXMDCP100', color: '#FB923C' },
+  NIFTYSML100: { label: 'Nifty Smallcap 100',yahoo: '^CNXSC',      color: '#34D399' },
+  NIFTYSML250: { label: 'Nifty Smallcap 250',yahoo: '^CNXSC250',   color: '#60A5FA' },
 }
 
 export const INDEX_GROUPS = [
@@ -71,118 +76,168 @@ export const POPULAR_STOCKS: SearchResult[] = [
   { symbol:'MARUTI',     company_name:'Maruti Suzuki India',           exchange:'NSE' },
 ]
 
-// ─── Live quote ───────────────────────────────────────────────────────────────
+// ─── Helper: extract a positive finite number from an object ─────────────────
+function dig(obj: Record<string, unknown>, ...keys: string[]): number {
+  for (const k of keys) {
+    const v = Number(obj[k])
+    if (isFinite(v) && v > 0) return v
+  }
+  return 0
+}
+
+// ─── Parse a raw Yahoo Finance price object ───────────────────────────────────
+function parseYFPrice(d: Record<string, unknown>, symbol: string, exchange: 'NSE' | 'BSE'): LiveQuote | null {
+  const ltp = dig(d,
+    'regularMarketPrice', 'currentPrice', 'price',
+    'lastPrice', 'ask', 'bid',
+  )
+  if (!ltp) return null
+
+  const prev  = dig(d, 'regularMarketPreviousClose', 'previousClose', 'regularMarketOpen') || ltp
+  const open  = dig(d, 'regularMarketOpen', 'open') || ltp
+  const high  = dig(d, 'regularMarketDayHigh', 'dayHigh', 'regularMarketOpen') || ltp
+  const low   = dig(d, 'regularMarketDayLow',  'dayLow',  'regularMarketOpen') || ltp
+  const chg   = Number(d.regularMarketChange ?? d.change ?? (ltp - prev))
+  const chgP  = Number(d.regularMarketChangePercent ?? d.changePercent
+    ?? (prev > 0 ? ((ltp - prev) / prev) * 100 : 0))
+
+  return {
+    symbol,
+    company_name: String(d.longName || d.shortName || d.companyName || d.displayName || symbol),
+    exchange,
+    ltp:          +ltp.toFixed(2),
+    open:         +open.toFixed(2),
+    high:         +high.toFixed(2),
+    low:          +low.toFixed(2),
+    prev_close:   +prev.toFixed(2),
+    change:       +chg.toFixed(2),
+    change_pct:   +chgP.toFixed(4),
+    volume:       +(d.regularMarketVolume ?? d.volume ?? 0),
+    market_cap:   d.marketCap ? Number(d.marketCap) : undefined,
+    pe_ratio:     d.trailingPE ? Number(d.trailingPE) : undefined,
+    week_52_high: d.fiftyTwoWeekHigh ? Number(d.fiftyTwoWeekHigh) : undefined,
+    week_52_low:  d.fiftyTwoWeekLow  ? Number(d.fiftyTwoWeekLow)  : undefined,
+    last_updated: new Date().toISOString(),
+  }
+}
+
+// ─── Source 1: Yahoo Finance v7 quoteSummary via allorigins ──────────────────
+async function fetchViaYFv7(yahooTicker: string, symbol: string, exchange: 'NSE' | 'BSE'): Promise<LiveQuote | null> {
+  try {
+    const yfUrl    = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(yahooTicker)}&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketOpen,regularMarketDayHigh,regularMarketDayLow,regularMarketPreviousClose,regularMarketVolume,longName,shortName,fiftyTwoWeekHigh,fiftyTwoWeekLow,trailingPE,marketCap`
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(yfUrl)}`
+    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) })
+    if (!res.ok) return null
+    const wrap = await res.json()
+    if (!wrap.contents) return null
+    const json = JSON.parse(wrap.contents)
+    const result = json?.quoteResponse?.result?.[0]
+    if (!result) return null
+    return parseYFPrice(result, symbol, exchange)
+  } catch { return null }
+}
+
+// ─── Source 2: Yahoo Finance v8 chart (last close from chart data) ────────────
+async function fetchViaYFv8(yahooTicker: string, symbol: string, exchange: 'NSE' | 'BSE'): Promise<LiveQuote | null> {
+  try {
+    const yfUrl    = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?range=5d&interval=1d`
+    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(yfUrl)}`
+    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) })
+    if (!res.ok) return null
+    const json = await res.json()
+    const chart = json?.chart?.result?.[0]
+    if (!chart) return null
+    const meta  = chart.meta || {}
+    const closes = chart.indicators?.quote?.[0]?.close || []
+    const lastClose = closes.filter((v: number | null) => v != null && isFinite(v)).slice(-1)[0]
+    if (!lastClose) return null
+    const d: Record<string, unknown> = {
+      regularMarketPrice: meta.regularMarketPrice || lastClose,
+      regularMarketPreviousClose: meta.previousClose || meta.chartPreviousClose || lastClose,
+      regularMarketOpen: meta.regularMarketOpen || lastClose,
+      regularMarketDayHigh: meta.regularMarketDayHigh || lastClose,
+      regularMarketDayLow: meta.regularMarketDayLow || lastClose,
+      regularMarketVolume: meta.regularMarketVolume || 0,
+      longName: meta.longName || meta.instrumentType || symbol,
+      fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh,
+      fiftyTwoWeekLow: meta.fiftyTwoWeekLow,
+    }
+    return parseYFPrice(d, symbol, exchange)
+  } catch { return null }
+}
+
+// ─── Source 3: Koyeb proxy fallback ──────────────────────────────────────────
+async function fetchViaKoyeb(symbol: string, exchange: 'NSE' | 'BSE'): Promise<LiveQuote | null> {
+  try {
+    const sym = exchange === 'BSE' ? `${symbol}.BO` : symbol
+    const res = await fetch(`${API_BASE}/stock?symbol=${encodeURIComponent(sym)}`, {
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok) return null
+    const json = await res.json()
+    const d: Record<string, unknown> = json?.data ?? json
+    return parseYFPrice(d, symbol, exchange)
+  } catch { return null }
+}
+
+// ─── Live quote — tries 3 sources in parallel, takes first success ────────────
 export async function fetchLiveQuote(
   symbol: string,
   exchange: 'NSE' | 'BSE' = 'NSE'
 ): Promise<LiveQuote | null> {
   const key = `q:${symbol}:${exchange}`
   const hit = quoteCache.get(key)
-  const ttl = isMarketOpen() ? 60_000 : 4 * 3600_000
-  if (hit && Date.now() - hit.ts < ttl) return hit.data
+  if (hit && Date.now() - hit.ts < QUOTE_TTL()) return hit.data
 
-  try {
-    const sym = exchange === 'BSE' ? `${symbol}.BO` : symbol
-    const url = `${API_BASE}/stock?symbol=${encodeURIComponent(sym)}`
-    const res = await fetch(url)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  // Yahoo Finance uses SYMBOL.NS for NSE, SYMBOL.BO for BSE
+  const yahooTicker = exchange === 'BSE' ? `${symbol}.BO` : `${symbol}.NS`
 
-    const json = await res.json()
+  // Race all 3 sources in parallel — use whichever returns a valid price first
+  const result = await Promise.any([
+    fetchViaYFv7(yahooTicker, symbol, exchange),
+    fetchViaYFv8(yahooTicker, symbol, exchange),
+    fetchViaKoyeb(symbol, exchange),
+  ].map(p => p.then(r => r ?? Promise.reject('no data'))))
+    .catch(() => null)
 
-    // Debug: log first quote response to console so we can see the actual structure
-    if (import.meta.env.DEV || !quoteCache.size) {
-      console.log(`[kfin] Quote response for ${symbol}:`, JSON.stringify(json).slice(0, 300))
-    }
-
-    // Proxy wraps in { status, data: {...} } — extract the data object
-    const d = json?.data ?? json
-
-    // Deep search for price across all known field names
-    function getNum(...keys: string[]): number {
-      for (const k of keys) {
-        const v = d[k]
-        if (v !== undefined && v !== null && isFinite(Number(v)) && Number(v) > 0) return Number(v)
-      }
-      return 0
-    }
-
-    const ltp = getNum(
-      'regularMarketPrice', 'currentPrice', 'price',
-      'lastPrice', 'close', 'previousClose'
-    )
-    if (!ltp) throw new Error(`No price in response. Keys: ${Object.keys(d).join(',')}`)
-
-    const prev  = getNum('regularMarketPreviousClose', 'previousClose', 'prevClose') || ltp
-    const open  = getNum('regularMarketOpen', 'open') || ltp
-    const high  = getNum('regularMarketDayHigh', 'dayHigh', 'high') || ltp
-    const low   = getNum('regularMarketDayLow', 'dayLow', 'low') || ltp
-    const vol   = getNum('regularMarketVolume', 'volume') || 0
-    const chg   = Number(d.regularMarketChange ?? d.change ?? (ltp - prev))
-    const chgP  = Number(d.regularMarketChangePercent ?? d.changePercent ?? (prev > 0 ? ((ltp - prev) / prev) * 100 : 0))
-
-    const quote: LiveQuote = {
-      symbol,
-      company_name: String(d.longName || d.shortName || d.companyName || d.name || symbol),
-      exchange,
-      ltp:          +ltp.toFixed(2),
-      open:         +open.toFixed(2),
-      high:         +high.toFixed(2),
-      low:          +low.toFixed(2),
-      prev_close:   +prev.toFixed(2),
-      change:       +chg.toFixed(2),
-      change_pct:   +chgP.toFixed(4),
-      volume:       +vol,
-      market_cap:   d.marketCap ? Number(d.marketCap) : undefined,
-      pe_ratio:     d.trailingPE ? Number(d.trailingPE) : undefined,
-      week_52_high: d.fiftyTwoWeekHigh ? Number(d.fiftyTwoWeekHigh) : undefined,
-      week_52_low:  d.fiftyTwoWeekLow  ? Number(d.fiftyTwoWeekLow)  : undefined,
-      last_updated: new Date().toISOString(),
-    }
-
-    quoteCache.set(key, { data: quote, ts: Date.now() })
-    return quote
-  } catch (e) {
-    console.warn(`[kfin] Quote failed ${symbol}:`, e)
-    return hit?.data ?? null
+  if (result) {
+    quoteCache.set(key, { data: result, ts: Date.now() })
+    console.log(`[kfin] ✓ ${symbol}: ₹${result.ltp} (${result.change_pct >= 0 ? '+' : ''}${result.change_pct.toFixed(2)}%)`)
+  } else {
+    console.warn(`[kfin] ✗ ${symbol}: all sources failed, stale=${!!hit?.data}`)
   }
+
+  return result ?? hit?.data ?? null
 }
 
-// ─── Multiple quotes (batched) ────────────────────────────────────────────────
+// ─── Multiple quotes — parallel with batching ────────────────────────────────
 export async function fetchMultipleQuotes(
   holdings: { symbol: string; exchange: 'NSE' | 'BSE' }[]
 ): Promise<Map<string, LiveQuote>> {
   const result = new Map<string, LiveQuote>()
-  const BATCH  = 4  // keep parallel requests low to avoid rate limiting
-  for (let i = 0; i < holdings.length; i += BATCH) {
-    const batch   = holdings.slice(i, i + BATCH)
-    const settled = await Promise.allSettled(
-      batch.map(h => fetchLiveQuote(h.symbol, h.exchange))
+  // Fetch all at once — each fetchLiveQuote already has 3 parallel sources
+  await Promise.allSettled(
+    holdings.map(h =>
+      fetchLiveQuote(h.symbol, h.exchange).then(q => {
+        if (q) result.set(h.symbol, q)
+      })
     )
-    settled.forEach((r, idx) => {
-      if (r.status === 'fulfilled' && r.value) {
-        result.set(batch[idx].symbol, r.value)
-      }
-    })
-    if (i + BATCH < holdings.length) await new Promise(r => setTimeout(r, 400))
-  }
+  )
   return result
 }
 
-// ─── Yahoo Finance historical data ───────────────────────────────────────────
-// Uses a chain of CORS proxies — tries each until one works
+// ─── Yahoo Finance historical OHLC ───────────────────────────────────────────
 async function fetchYahooHistory(
-  ticker: string,   // raw yahoo ticker e.g. "^NSEI" or "TATAMOTORS.NS"
+  ticker: string,
   period: string,
   interval: string
 ): Promise<HistPoint[]> {
   const cacheKey = `h:${ticker}:${period}:${interval}`
   const hit = histCache.get(cacheKey)
-  if (hit && Date.now() - hit.ts < 6 * 3600_000) return hit.data
+  if (hit && Date.now() - hit.ts < HIST_TTL) return hit.data
 
-  // Yahoo Finance v8 chart URL
   const yfPath = `v8/finance/chart/${encodeURIComponent(ticker)}?range=${period}&interval=${interval}&events=history&includeAdjustedClose=true`
 
-  // CORS proxy chain — try each until one succeeds
   const proxies = [
     `https://api.allorigins.win/get?url=${encodeURIComponent(`https://query1.finance.yahoo.com/${yfPath}`)}`,
     `https://api.allorigins.win/get?url=${encodeURIComponent(`https://query2.finance.yahoo.com/${yfPath}`)}`,
@@ -191,46 +246,44 @@ async function fetchYahooHistory(
 
   for (const proxyUrl of proxies) {
     try {
-      const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) })
+      const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) })
       if (!res.ok) continue
-
-      let rawJson: unknown
       const text = await res.text()
-
-      // allorigins wraps in { contents: "..." }
+      let rawJson: unknown
       if (proxyUrl.includes('allorigins')) {
         const wrap = JSON.parse(text)
-        if (!wrap.contents) continue
+        if (!wrap?.contents) continue
         rawJson = JSON.parse(wrap.contents)
       } else {
         rawJson = JSON.parse(text)
       }
 
-      const json   = rawJson as { chart?: { result?: Array<{ timestamp?: number[]; indicators?: { quote?: Array<{ close?: number[] }>; adjclose?: Array<{ adjclose?: number[] }> } }> } }
-      const chart  = json?.chart?.result?.[0]
-      if (!chart) continue
+      type YFChart = { chart?: { result?: Array<{ timestamp?: number[]; indicators?: { quote?: Array<{ close?: (number | null)[] }>; adjclose?: Array<{ adjclose?: (number | null)[] }> } }> } }
+      const json    = rawJson as YFChart
+      const chart   = json?.chart?.result?.[0]
+      if (!chart?.timestamp?.length) continue
 
-      const timestamps = chart.timestamp || []
-      const closes     = chart.indicators?.quote?.[0]?.close || []
-      const adjcloses  = chart.indicators?.adjclose?.[0]?.adjclose || closes
+      const ts       = chart.timestamp!
+      const closes   = chart.indicators?.quote?.[0]?.close || []
+      const adjClose = chart.indicators?.adjclose?.[0]?.adjclose || closes
 
       const points: HistPoint[] = []
-      for (let i = 0; i < timestamps.length; i++) {
-        const c = adjcloses[i] ?? closes[i]
+      for (let i = 0; i < ts.length; i++) {
+        const c = adjClose[i] ?? closes[i]
         if (!c || !isFinite(c) || c <= 0) continue
-        const date = new Date(timestamps[i] * 1000).toISOString().split('T')[0]
+        const date = new Date(ts[i] * 1000).toISOString().split('T')[0]
         points.push({ date, close: +c.toFixed(2) })
       }
       points.sort((a, b) => a.date.localeCompare(b.date))
       if (!points.length) continue
 
       histCache.set(cacheKey, { data: points, ts: Date.now() })
+      console.log(`[kfin] history ${ticker}: ${points.length} points`)
       return points
     } catch { continue }
   }
 
-  // All proxies failed
-  console.warn(`Historical data unavailable for ${ticker}`)
+  console.warn(`[kfin] history failed for ${ticker}`)
   return hit?.data ?? []
 }
 
@@ -241,58 +294,76 @@ export async function fetchStockHistory(
   return fetchYahooHistory(`${symbol}.NS`, period, interval)
 }
 
-// ─── Portfolio history — daily value = sum(qty × price) ──────────────────────
+// ─── Portfolio history — daily ₹ value = sum(qty × close) ───────────────────
 export async function fetchPortfolioHistory(
   holdings: StockHolding[],
-  period:   string,
+  period: string,
   interval: string
 ): Promise<HistPoint[]> {
   if (!holdings.length) return []
 
-  // Fetch all stock histories in parallel
   const allHist = await Promise.all(
     holdings.map(h =>
       fetchStockHistory(h.symbol, period, interval)
-        .then(pts => ({ h, pts, priceMap: new Map(pts.map(p => [p.date, p.close])) }))
+        .then(pts => ({ h, pts, map: new Map(pts.map(p => [p.date, p.close])) }))
     )
   )
 
-  // Collect all trading dates across all stocks
   const allDates = [...new Set(allHist.flatMap(({ pts }) => pts.map(p => p.date)))].sort()
   if (!allDates.length) return []
 
   return allDates.map(date => {
-    let totalValue = 0
-    let covered = 0
-    for (const { h, pts, priceMap } of allHist) {
-      let price = priceMap.get(date)
+    let total = 0
+    for (const { h, pts, map } of allHist) {
+      let price = map.get(date)
       if (!price) {
-        // Fill forward — use last available price before this date
         const prev = pts.filter(p => p.date <= date)
-        price = prev.length ? prev[prev.length - 1].close : undefined
+        price = prev.length ? prev[prev.length - 1].close : h.avg_buy_price
       }
-      if (price && isFinite(price)) {
-        totalValue += h.quantity * price
-        covered++
-      } else {
-        // Fall back to avg_buy_price so the invested line stays accurate
-        totalValue += h.quantity * h.avg_buy_price
-        covered++
-      }
+      total += h.quantity * (price || h.avg_buy_price)
     }
-    return { date, close: +totalValue.toFixed(2) }
+    return { date, close: +total.toFixed(2) }
   }).filter(p => p.close > 0)
 }
 
-// ─── Index history ────────────────────────────────────────────────────────────
+// ─── Index invested-value comparison ─────────────────────────────────────────
+// "If you had invested ₹X in this index on startDate — what would it be worth?"
+export async function fetchIndexInvestedValue(
+  indexId: string,
+  totalInvested: number,
+  startDate: string,
+  period: string,
+  interval: string
+): Promise<HistPoint[]> {
+  const idx = INDEX_TICKERS[indexId]
+  if (!idx || totalInvested <= 0) return []
+
+  const raw = await fetchYahooHistory(idx.yahoo, period, interval)
+  if (!raw.length) return []
+
+  // Find index value on or just after startDate
+  const startIdx = raw.findIndex(p => p.date >= startDate)
+  if (startIdx < 0) return []
+
+  const baseValue = raw[startIdx].close
+  if (!baseValue || baseValue <= 0) return []
+
+  // Units of index bought with totalInvested
+  const units = totalInvested / baseValue
+
+  return raw.slice(startIdx).map(p => ({
+    date:  p.date,
+    close: +(p.close * units).toFixed(2),
+  }))
+}
+
+// ─── Index history (raw) ─────────────────────────────────────────────────────
 export async function fetchIndexHistory(
   indexId: string, period: string, interval: string
 ): Promise<HistPoint[]> {
   const idx = INDEX_TICKERS[indexId]
   if (!idx) return []
-  // Decode %5E back to ^ for the actual ticker
-  const ticker = decodeURIComponent(idx.yahoo)
-  return fetchYahooHistory(ticker, period, interval)
+  return fetchYahooHistory(idx.yahoo, period, interval)
 }
 
 // ─── Rebase to 100 ────────────────────────────────────────────────────────────
@@ -307,7 +378,7 @@ export function rebaseTo100(points: HistPoint[]): HistPoint[] {
 export async function searchStocks(query: string): Promise<SearchResult[]> {
   if (query.length < 2) return []
   try {
-    const res  = await fetch(`${API_BASE}/search?query=${encodeURIComponent(query)}`)
+    const res  = await fetch(`${API_BASE}/search?query=${encodeURIComponent(query)}`, { signal: AbortSignal.timeout(5000) })
     if (!res.ok) throw new Error()
     const json = await res.json()
     if (json.status !== 'success') return []
@@ -324,47 +395,13 @@ export async function searchStocks(query: string): Promise<SearchResult[]> {
   }
 }
 
-
-// ─── "What if Nifty" calculation ─────────────────────────────────────────────
-// Given: user invested totalInvested on startDate
-// Question: if they had put that same amount in the index instead,
-//           what would their portfolio value be on each subsequent date?
-// Returns: array of { date, close } where close = rupee value of index investment
-export async function fetchIndexInvestedValue(
-  indexId:       string,
-  totalInvested: number,   // ₹ amount user actually invested
-  startDate:     string,   // YYYY-MM-DD — date of first stock purchase
-  period:        string,
-  interval:      string
-): Promise<HistPoint[]> {
-  const raw = await fetchIndexHistory(indexId, period, interval)
-  if (!raw.length || totalInvested <= 0) return []
-
-  // Find the index value on or just after startDate
-  const startIdx = raw.findIndex(p => p.date >= startDate)
-  if (startIdx < 0) return []
-
-  const baseValue = raw[startIdx].close
-  if (!baseValue || baseValue <= 0) return []
-
-  // Scale: 1 unit of index = totalInvested / baseValue
-  const units = totalInvested / baseValue
-
-  // Return ₹ value of that many index units on each date
-  return raw.slice(startIdx).map(p => ({
-    date:  p.date,
-    close: +(p.close * units).toFixed(2),
-  }))
-}
-// ─── Portfolio P&L — only real prices ────────────────────────────────────────
+// ─── Portfolio P&L ────────────────────────────────────────────────────────────
 export function computePortfolioPnL(
   holdings: StockHolding[],
-  quotes:   Map<string, LiveQuote>
+  quotes: Map<string, LiveQuote>
 ) {
-  let totalInvested = 0
-  let currentValue  = 0
-  let dayPnL        = 0
-  const marketOpen  = isMarketOpen()
+  let totalInvested = 0, currentValue = 0, dayPnL = 0
+  const marketOpen = isMarketOpen()
 
   holdings.forEach(h => {
     const invested = h.quantity * h.avg_buy_price
@@ -374,23 +411,18 @@ export function computePortfolioPnL(
       currentValue += h.quantity * q.ltp
       if (marketOpen && isFinite(q.change)) dayPnL += h.quantity * q.change
     } else {
-      currentValue += invested  // no fake P&L when price unavailable
+      currentValue += invested
     }
   })
 
   const totalPnL    = currentValue - totalInvested
   const totalPnLPct = totalInvested > 0 ? (totalPnL / totalInvested) * 100 : 0
-  const dayPnLPct   = (currentValue - dayPnL) > 0
-    ? (dayPnL / (currentValue - dayPnL)) * 100 : 0
-
+  const dayPnLPct   = (currentValue - dayPnL) > 0 ? (dayPnL / (currentValue - dayPnL)) * 100 : 0
   return { totalInvested, currentValue, totalPnL, totalPnLPct, dayPnL, dayPnLPct }
 }
 
 // ─── Health score ─────────────────────────────────────────────────────────────
-export function computeHealthScore(
-  holdings: StockHolding[],
-  quotes:   Map<string, LiveQuote>
-): HealthScore {
+export function computeHealthScore(holdings: StockHolding[], quotes: Map<string, LiveQuote>): HealthScore {
   if (!holdings.length) return { overall:0, risk_level:'Low', top_holding_pct:0, sector_count:0 }
   const sectors  = new Set(holdings.map(h => h.sector || 'Other'))
   const vals     = holdings.map(h => h.quantity * (quotes.get(h.symbol)?.ltp ?? h.avg_buy_price))
