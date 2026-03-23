@@ -112,13 +112,34 @@ function parseYF(d: Record<string, unknown>, symbol: string, exchange: 'NSE'|'BS
 }
 
 // ─── LIVE QUOTE ───────────────────────────────────────────────────────────────
+// ─── Build a stub quote from CSV data (instant, no API call) ─────────────────
+// Shows avg_buy_price as "current" so user never sees empty data
+// This gets overwritten when live API responds
+export function buildStubQuote(
+  symbol: string,
+  exchange: 'NSE' | 'BSE',
+  avgBuyPrice: number,
+  companyName: string
+): LiveQuote {
+  return {
+    symbol, company_name: companyName, exchange,
+    ltp: avgBuyPrice, open: avgBuyPrice, high: avgBuyPrice,
+    low: avgBuyPrice, prev_close: avgBuyPrice,
+    change: 0, change_pct: 0, volume: 0,
+    last_updated: 'csv',
+  }
+}
+
 export async function fetchLiveQuote(
   symbol: string,
   exchange: 'NSE' | 'BSE' = 'NSE'
 ): Promise<LiveQuote | null> {
   const key = `q:${symbol}:${exchange}`
   const hit = quoteCache.get(key)
-  if (hit && Date.now() - hit.ts < QUOTE_TTL()) return hit.data
+  // Return cache if fresh AND it has a real price (not a stub)
+  if (hit && Date.now() - hit.ts < QUOTE_TTL() && hit.data.last_updated !== 'csv') {
+    return hit.data
+  }
 
   const ticker = exchange === 'BSE' ? `${symbol}.BO` : `${symbol}.NS`
 
@@ -126,7 +147,8 @@ export async function fetchLiveQuote(
     const res  = await fetch(`/api/quote?symbol=${encodeURIComponent(ticker)}`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const json = await res.json()
-    if (json.error) throw new Error(json.error)
+    if (json.error && json.error !== 'price_unavailable') throw new Error(json.error)
+    if (json.error === 'price_unavailable') return hit?.data ?? null
 
     const d = (json.data ?? json) as Record<string, unknown>
     const q = parseYF(d, symbol, exchange)
@@ -137,7 +159,7 @@ export async function fetchLiveQuote(
     return q
   } catch (e) {
     console.warn(`[kfin] ✗ ${symbol}:`, e)
-    return hit?.data ?? null   // return stale cache if available
+    return hit?.data ?? null
   }
 }
 
