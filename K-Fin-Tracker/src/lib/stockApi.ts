@@ -324,6 +324,38 @@ export async function searchStocks(query: string): Promise<SearchResult[]> {
   }
 }
 
+
+// ─── "What if Nifty" calculation ─────────────────────────────────────────────
+// Given: user invested totalInvested on startDate
+// Question: if they had put that same amount in the index instead,
+//           what would their portfolio value be on each subsequent date?
+// Returns: array of { date, close } where close = rupee value of index investment
+export async function fetchIndexInvestedValue(
+  indexId:       string,
+  totalInvested: number,   // ₹ amount user actually invested
+  startDate:     string,   // YYYY-MM-DD — date of first stock purchase
+  period:        string,
+  interval:      string
+): Promise<HistPoint[]> {
+  const raw = await fetchIndexHistory(indexId, period, interval)
+  if (!raw.length || totalInvested <= 0) return []
+
+  // Find the index value on or just after startDate
+  const startIdx = raw.findIndex(p => p.date >= startDate)
+  if (startIdx < 0) return []
+
+  const baseValue = raw[startIdx].close
+  if (!baseValue || baseValue <= 0) return []
+
+  // Scale: 1 unit of index = totalInvested / baseValue
+  const units = totalInvested / baseValue
+
+  // Return ₹ value of that many index units on each date
+  return raw.slice(startIdx).map(p => ({
+    date:  p.date,
+    close: +(p.close * units).toFixed(2),
+  }))
+}
 // ─── Portfolio P&L — only real prices ────────────────────────────────────────
 export function computePortfolioPnL(
   holdings: StockHolding[],
