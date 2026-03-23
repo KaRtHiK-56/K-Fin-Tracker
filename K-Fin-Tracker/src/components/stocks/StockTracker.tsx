@@ -5,7 +5,7 @@ import {
   LineElement, Tooltip, Filler, ArcElement, Legend,
 } from 'chart.js'
 import {
-  fetchLiveQuote, computePortfolioPnL, computeHealthScore,
+  fetchLiveQuote, buildStubQuote, computePortfolioPnL, computeHealthScore,
   searchStocks, POPULAR_STOCKS, isMarketOpen,
   fetchPortfolioHistory, fetchIndexHistory, fetchIndexInvestedValue, rebaseTo100,
   clearQuoteCache, INDEX_TICKERS, INDEX_GROUPS, TIME_RANGES,
@@ -141,12 +141,28 @@ export default function StockTracker() {
     setRefreshing(false)
   }, [])
 
-  // Load quotes on mount + whenever holdings change
+  // On mount / when holdings change:
+  // 1. Immediately show CSV avg_buy_price as "current" — user sees data instantly
+  // 2. Then fire live API to get real prices in background
   useEffect(() => {
-    if (holdings.length) {
-      setLoading(true)
-      loadQuotes(holdings)
-    }
+    if (!holdings.length) return
+
+    // Step 1: Build stub quotes from CSV data — instant display, no API needed
+    setQuotes(prev => {
+      const next = new Map(prev)
+      holdings.forEach(h => {
+        if (!next.has(h.symbol)) {
+          next.set(h.symbol, buildStubQuote(
+            h.symbol, h.exchange, h.avg_buy_price, h.company_name
+          ))
+        }
+      })
+      return next
+    })
+    setLoading(false)
+
+    // Step 2: Fetch live prices in background
+    loadQuotes(holdings)
   }, [holdings.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Auto-refresh during market hours ── */
@@ -172,34 +188,68 @@ export default function StockTracker() {
     const tr = TIME_RANGES.find(r => r.id === timeRange) || TIME_RANGES[3]
     const { period, interval } = tr
 
-    // Find the earliest buy date across all holdings
-    const startDate = holdings
-      .map(h => h.buy_date || '2020-01-01')
-      .sort()[0]
-
-    const totalInvested = holdings.reduce((s, h) => s + h.quantity * h.avg_buy_price, 0)
-
     setHistLoading(true)
     setHistError(null)
 
     ;(async () => {
       try {
-        const [portHist, ...indexHists] = await Promise.all([
-          fetchPortfolioHistory(holdings, period, interval),
-          // For each index: simulate investing same ₹ amount on same start date
-          ...benchmarkIndices.map(id =>
-            fetchIndexInvestedValue(id, totalInvested, startDate, period, interval)
-          ),
-        ])
-
+        // ── Portfolio history: actual daily value ──────────────────────────
+        const portHist = await fetchPortfolioHistory(holdings, period, interval)
         setPortfolioHistory(portHist)
 
+        // ── Index history: "what if I bought index on each buy date" ────────
+        // For each selected index, fetch its raw history then simulate
+        // buying index units on each stock purchase date with that stock's ₹ amount.
+        // This is the most accurate comparison possible.
         const newIdx: Record<string, HistPoint[]> = {}
-        benchmarkIndices.forEach((id, i) => { newIdx[id] = indexHists[i] || [] })
+
+        await Promise.all(
+          benchmarkIndices.map(async (id) => {
+            try {
+              const idxHistory = await fetchIndexHistory(id, period, interval)
+              if (!idxHistory.length) return
+
+              const idxMap = new Map(idxHistory.map(p => [p.date, p.close]))
+
+              // Find nearest index date for each buy event
+              // Accumulate units bought on each date
+              let totalUnits = 0
+              const unitEvents: { date: string; units: number }[] = []
+
+              for (const h of holdings) {
+                const buyDate   = h.buy_date || idxHistory[0].date
+                const amount    = h.quantity * h.avg_buy_price
+
+                // Find index price on or just after buy date
+                const buyIdx    = idxHistory.findIndex(p => p.date >= buyDate)
+                const idxPrice  = buyIdx >= 0 ? idxHistory[buyIdx].close : idxHistory[0].close
+                if (!idxPrice || idxPrice <= 0) continue
+
+                const units = amount / idxPrice
+                totalUnits += units
+                unitEvents.push({ date: buyDate, units })
+              }
+
+              // Build daily value: for each date in the chart, sum up
+              // units × index_price for all buy events on or before that date
+              const result: HistPoint[] = idxHistory.map(p => {
+                const applicableUnits = unitEvents
+                  .filter(e => e.date <= p.date)
+                  .reduce((s, e) => s + e.units, 0)
+                return { date: p.date, close: +(applicableUnits * p.close).toFixed(2) }
+              }).filter(p => p.close > 0)
+
+              newIdx[id] = result
+            } catch (e) {
+              console.warn(`[kfin] index history failed ${id}:`, e)
+            }
+          })
+        )
+
         setIndexHistories(newIdx)
 
         if (portHist.length === 0) {
-          setHistError('Price history unavailable. Live prices still loading.')
+          setHistError('Price history unavailable. Showing live prices only.')
         }
       } catch {
         setHistError('Could not load historical data.')
@@ -208,7 +258,7 @@ export default function StockTracker() {
       }
     })()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [holdings.map(h => h.symbol + h.quantity).join(','), timeRange, benchmarkIndices.join(',')]
+  }, [holdings.map(h => h.symbol + h.buy_date).join(','), timeRange, benchmarkIndices.join(',')]
   )
 
   /* ── Enrich holdings with live data ── */
@@ -272,8 +322,8 @@ export default function StockTracker() {
      The gap between them IS your P&L.
   ── */
   const pnlLineData = useMemo(() => {
-    const invested = pnl.totalInvested || 0
-    if (!portfolioHistory.length || invested === 0) return null
+    const totalInvested = pnl.totalInvested || 0
+    if (!portfolioHistory.length || totalInvested === 0) return null
 
     const n   = portfolioHistory.length
     const fmt = n > 90
@@ -282,13 +332,36 @@ export default function StockTracker() {
 
     const labels   = portfolioHistory.map(p => fmt(p.date))
     const portVals = portfolioHistory.map(p => p.close)
-    const invLine  = portfolioHistory.map(() => invested)
+
+    // ── Cumulative invested line ────────────────────────────────────────────
+    // On each date, sum up (qty × avg_buy_price) for all holdings bought
+    // ON OR BEFORE that date. This shows the step-wise capital deployment.
+    // Example: bought TATAMOTORS on Apr 1 → step up. Bought ITC on Jun 1 → step up again.
+    const buyEvents = holdings
+      .map(h => ({
+        date:     h.buy_date || portfolioHistory[0].date,
+        amount:   h.quantity * h.avg_buy_price,
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date))
+
+    const invLine = portfolioHistory.map(({ date }) => {
+      return buyEvents
+        .filter(e => e.date <= date)
+        .reduce((sum, e) => sum + e.amount, 0)
+    })
+
+    // If all buys are before the chart start date, invLine will be flat
+    // (all capital deployed before the chart period) — that's correct
+    const firstNonZero = invLine.findIndex(v => v > 0)
+    const effectiveInvLine = firstNonZero >= 0
+      ? invLine.map((v, i) => i < firstNonZero ? invLine[firstNonZero] : v)
+      : invLine.map(() => totalInvested)
 
     return {
       labels,
       datasets: [
         {
-          label: 'Portfolio Value',
+          label: 'Portfolio Value (₹)',
           data:  portVals,
           borderColor: '#8B5CF6',
           backgroundColor: 'rgba(139,92,246,0.10)',
@@ -297,16 +370,18 @@ export default function StockTracker() {
           borderWidth: 2,
         },
         {
-          label: `Invested (${fL(invested)})`,
-          data:  invLine,
-          borderColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(100,100,100,0.4)',
-          backgroundColor: 'transparent',
-          fill: false, tension: 0, pointRadius: 0,
-          borderDash: [6, 4], borderWidth: 1.5,
+          label: `Invested (${fL(totalInvested)} total)`,
+          data:  effectiveInvLine,
+          borderColor: '#F59E0B',
+          backgroundColor: 'rgba(245,158,11,0.06)',
+          fill: true, tension: 0.2,
+          pointRadius: 0,
+          borderDash: [5, 3],
+          borderWidth: 1.5,
         },
       ],
     }
-  }, [portfolioHistory, pnl.totalInvested, isDark])
+  }, [portfolioHistory, holdings, pnl.totalInvested, isDark])
 
   /* ── Benchmark comparison ────────────────────────────────────────────────
      Both portfolio and index values are in ACTUAL RUPEES (₹).
@@ -592,32 +667,31 @@ export default function StockTracker() {
           <div className={styles.strip}>
             {[
               { label: 'Invested',    val: fL(pnl.totalInvested), color: 'var(--text-primary)' },
-              {
-                label: 'Current',
-                val:   quotes.size > 0 ? fL(pnl.currentValue) : quoteError ? '—' : '···',
-                sub:   quoteError
-                  ? quoteError
-                  : quotes.size > 0 && updatedAt
-                    ? `as of ${updatedAt.toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', hour12: true })} · ${isMarketOpen() ? 'Live' : 'Last close'}`
-                    : 'Fetching live prices…',
-                color: quoteError ? 'var(--neg)' : 'var(--brand)',
-              },
-              {
-                label: 'Total P&L',
-                val:   quotes.size > 0 ? (pnl.totalPnL >= 0 ? '+' : '') + fL(pnl.totalPnL) : '···',
-                sub:   quotes.size > 0
+              (() => {
+                // Determine if we have live prices or only CSV stub prices
+                const hasLive = [...quotes.values()].some(q => q.last_updated !== 'csv')
+                const timeLabel = hasLive && updatedAt
+                  ? `Live · ${updatedAt.toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', hour12:true })}`
+                  : quoteError
+                    ? 'Using last known price'
+                    : 'Fetching live…'
+                return { label: 'Current', val: fL(pnl.currentValue), sub: timeLabel, color: hasLive ? 'var(--brand)' : 'var(--text-secondary)' }
+              })(),
+              (() => {
+                const hasLive = [...quotes.values()].some(q => q.last_updated !== 'csv')
+                const pnlVal  = hasLive ? (pnl.totalPnL >= 0 ? '+' : '') + fL(pnl.totalPnL) : '—'
+                const pnlSub  = hasLive
                   ? (pnl.totalPnLPct >= 0 ? '+' : '') + pnl.totalPnLPct.toFixed(2) + '% overall'
-                  : 'Waiting for prices',
-                color: pnl.totalPnL >= 0 ? 'var(--pos)' : 'var(--neg)',
-              },
-              {
-                label: isMarketOpen() ? "Today's P&L" : "Last Session P&L",
-                val:   quotes.size > 0 ? (pnl.dayPnL >= 0 ? '+' : '') + fL(pnl.dayPnL) : '···',
-                sub:   quotes.size > 0 && isMarketOpen()
-                  ? (pnl.dayPnLPct >= 0 ? '+' : '') + pnl.dayPnLPct.toFixed(2) + '% today'
-                  : quotes.size > 0 ? 'Market closed · ₹0 change' : 'Market closed',
-                color: pnl.dayPnL >= 0 ? 'var(--pos)' : 'var(--neg)',
-              },
+                  : quoteError ? quoteError : 'Awaiting live prices'
+                return { label: 'Total P&L', val: pnlVal, sub: pnlSub, color: pnl.totalPnL >= 0 ? 'var(--pos)' : 'var(--neg)' }
+              })(),
+              (() => {
+                const hasLive = [...quotes.values()].some(q => q.last_updated !== 'csv')
+                const open    = isMarketOpen()
+                const dayVal  = hasLive && open ? (pnl.dayPnL >= 0 ? '+' : '') + fL(pnl.dayPnL) : '—'
+                const daySub  = !hasLive ? 'Awaiting live prices' : open ? (pnl.dayPnLPct >= 0 ? '+' : '') + pnl.dayPnLPct.toFixed(2) + '% today' : 'Market closed'
+                return { label: open ? "Today's P&L" : "Last Session P&L", val: dayVal, sub: daySub, color: pnl.dayPnL >= 0 ? 'var(--pos)' : 'var(--neg)' }
+              })(),
             ].map(c => (
               <div key={c.label} className={styles.sCard}>
                 <div className={styles.sLabel}>{c.label}</div>
@@ -821,19 +895,38 @@ export default function StockTracker() {
                   <button onClick={() => setSelected(null)} style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer' }}>✕</button>
                 </div>
               <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 12 }}>
-                  {selected.quote ? (
-                    <>
-                      <div style={{ fontSize: 26, fontWeight: 700, fontFamily: 'var(--mono)' }}>{fi(selected.quote.ltp)}</div>
-                      <div style={{ fontSize: 13, fontWeight: 600, marginTop: 2, color: selected.quote.change >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
-                        {selected.quote.change >= 0 ? '▲' : '▼'} {selected.quote.change >= 0 ? '+' : ''}{selected.quote.change.toFixed(2)} ({selected.quote.change_pct >= 0 ? '+' : ''}{selected.quote.change_pct.toFixed(2)}%)
+                  {(() => {
+                    const q = selected.quote
+                    const isLive = q && q.last_updated !== 'csv'
+                    const isStub = q && q.last_updated === 'csv'
+                    if (isLive && q) {
+                      return (
+                        <>
+                          <div style={{ fontSize: 26, fontWeight: 700, fontFamily: 'var(--mono)' }}>{fi(q.ltp)}</div>
+                          <div style={{ fontSize: 13, fontWeight: 600, marginTop: 2, color: q.change >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                            {q.change >= 0 ? '▲' : '▼'} {q.change >= 0 ? '+' : ''}{q.change.toFixed(2)} ({q.change_pct >= 0 ? '+' : ''}{q.change_pct.toFixed(2)}%)
+                          </div>
+                        </>
+                      )
+                    }
+                    if (isStub && q) {
+                      return (
+                        <>
+                          <div style={{ fontSize: 26, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--text-secondary)' }}>{fi(q.ltp)}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--brand)', display: 'inline-block', animation: 'pulse 1.5s infinite' }} />
+                            Avg cost shown · fetching live price…
+                          </div>
+                        </>
+                      )
+                    }
+                    return (
+                      <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>
+                        <span style={{ fontSize: 20, fontFamily: 'var(--mono)', color: 'var(--text-muted)' }}>···</span>
+                        <div style={{ fontSize: 11, marginTop: 4 }}>Loading…</div>
                       </div>
-                    </>
-                  ) : (
-                    <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>
-                      <span style={{ fontSize: 20, fontFamily: 'var(--mono)', color: 'var(--text-muted)' }}>···</span>
-                      <div style={{ fontSize: 11, marginTop: 4 }}>Fetching live price…</div>
-                    </div>
-                  )}
+                    )
+                  })()}
                 </div>
                 <div style={{ height: 120 }}>
                   <Line key={selected.id} data={sparkData(selected)} options={sparkOpts as never} />
@@ -860,7 +953,7 @@ export default function StockTracker() {
                     { l: 'Qty held', v: `${selected.quantity} shares`, c: '' },
                     { l: 'Avg cost', v: fi(selected.avg_buy_price), c: '' },
                     { l: 'Invested', v: fL(selected.invested_value), c: '' },
-                    { l: 'Current',  v: selected.quote && selected.quote.ltp > 0 ? fL(selected.current_value) : '···', c: 'var(--brand)' },
+                    { l: 'Current',  v: selected.quote ? fL(selected.current_value) : '···', c: selected.quote?.last_updated === 'csv' ? 'var(--text-secondary)' : 'var(--brand)' },
                   ].map(({ l, v, c }) => (
                     <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5 }}>
                       <span style={{ color: 'var(--text-secondary)' }}>{l}</span>
