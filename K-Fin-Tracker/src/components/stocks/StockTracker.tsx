@@ -5,10 +5,10 @@ import {
   LineElement, Tooltip, Filler, ArcElement, Legend,
 } from 'chart.js'
 import {
-  fetchLiveQuote, fetchMultipleQuotes, computePortfolioPnL, computeHealthScore,
+  fetchLiveQuote, computePortfolioPnL, computeHealthScore,
   searchStocks, POPULAR_STOCKS, isMarketOpen,
   fetchPortfolioHistory, fetchIndexHistory, fetchIndexInvestedValue, rebaseTo100,
-  INDEX_TICKERS, INDEX_GROUPS, TIME_RANGES,
+  clearQuoteCache, INDEX_TICKERS, INDEX_GROUPS, TIME_RANGES,
   type HistPoint,
 } from '../../lib/stockApi'
 import type { StockHolding, StockWithQuote, LiveQuote, SortField, SortDir } from '../../types'
@@ -106,17 +106,18 @@ export default function StockTracker() {
   }, [])
 
   /* ── Fetch quotes ── */
-  const loadQuotes = useCallback(async (list: StockHolding[]) => {
-    if (!list.length) { setLoading(false); return }
+  const loadQuotes = useCallback(async (list: StockHolding[], forceRefresh = false) => {
+    if (!list.length) { setLoading(false); setRefreshing(false); return }
+    if (forceRefresh) {
+      clearQuoteCache()  // bust the cache so we actually fetch fresh prices
+    }
     try {
-      // Fire all quote requests simultaneously — update map as each arrives
-      const partialMap = new Map<string, LiveQuote>()
+      // Fire all quote requests simultaneously
+      // setQuotes is called as each price arrives — UI updates stock by stock
       await Promise.allSettled(
         list.map(h =>
           fetchLiveQuote(h.symbol, h.exchange).then(q => {
             if (q) {
-              partialMap.set(h.symbol, q)
-              // Update state immediately on each arrival so UI shows prices as they load
               setQuotes(prev => {
                 const next = new Map(prev)
                 next.set(h.symbol, q)
@@ -127,6 +128,8 @@ export default function StockTracker() {
         )
       )
       setUpdatedAt(new Date())
+    } catch(e) {
+      console.error('[kfin] loadQuotes error:', e)
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -543,7 +546,7 @@ export default function StockTracker() {
         <div className={styles.hActions}>
           {hasData && (
             <button className={`${styles.iconBtn} ${refreshing ? styles.spin : ''}`}
-              onClick={() => { setRefreshing(true); loadQuotes(holdings) }} title="Refresh prices">↻
+              onClick={() => { setRefreshing(true); loadQuotes(holdings, true) }} title="Refresh prices — fetches current market prices">↻
             </button>
           )}
           <button className={styles.importBtn} onClick={() => setShowImport(true)}>⬆ Import CSV</button>
