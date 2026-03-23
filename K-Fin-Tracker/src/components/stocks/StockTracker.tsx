@@ -7,7 +7,7 @@ import {
 import {
   fetchMultipleQuotes, computePortfolioPnL, computeHealthScore,
   searchStocks, POPULAR_STOCKS, isMarketOpen,
-  fetchPortfolioHistory, fetchIndexHistory, rebaseTo100,
+  fetchPortfolioHistory, fetchIndexHistory, fetchIndexInvestedValue, rebaseTo100,
   INDEX_TICKERS, INDEX_GROUPS, TIME_RANGES,
   type HistPoint,
 } from '../../lib/stockApi'
@@ -138,22 +138,35 @@ export default function StockTracker() {
     return () => clearInterval(id)
   }, [holdings, loadQuotes])
 
-  /* ── Fetch real historical data whenever holdings/timeRange/indices change ── */
+  /* ── Fetch real historical data ──────────────────────────────────────────
+     Portfolio history:  real daily value of all holdings (qty × close price)
+     Index history:      "if I invested ₹X in this index on my first buy date"
+                         → shows apples-to-apples rupee comparison
+  ── */
   useEffect(() => {
     if (!holdings.length) return
 
     const tr = TIME_RANGES.find(r => r.id === timeRange) || TIME_RANGES[3]
     const { period, interval } = tr
 
+    // Find the earliest buy date across all holdings
+    const startDate = holdings
+      .map(h => h.buy_date || '2020-01-01')
+      .sort()[0]
+
+    const totalInvested = holdings.reduce((s, h) => s + h.quantity * h.avg_buy_price, 0)
+
     setHistLoading(true)
     setHistError(null)
 
     ;(async () => {
       try {
-        // All fetches in parallel: portfolio + every selected index
         const [portHist, ...indexHists] = await Promise.all([
           fetchPortfolioHistory(holdings, period, interval),
-          ...benchmarkIndices.map(id => fetchIndexHistory(id, period, interval)),
+          // For each index: simulate investing same ₹ amount on same start date
+          ...benchmarkIndices.map(id =>
+            fetchIndexInvestedValue(id, totalInvested, startDate, period, interval)
+          ),
         ])
 
         setPortfolioHistory(portHist)
@@ -163,7 +176,7 @@ export default function StockTracker() {
         setIndexHistories(newIdx)
 
         if (portHist.length === 0) {
-          setHistError('Price history unavailable for some holdings. Live P&L still accurate.')
+          setHistError('Price history unavailable. Live prices still loading.')
         }
       } catch {
         setHistError('Could not load historical data.')
@@ -171,7 +184,8 @@ export default function StockTracker() {
         setHistLoading(false)
       }
     })()
-  }, [holdings.map(h=>h.symbol).join(','), timeRange, benchmarkIndices.join(',')]
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [holdings.map(h => h.symbol + h.quantity).join(','), timeRange, benchmarkIndices.join(',')]
   )
 
   /* ── Enrich holdings with live data ── */
@@ -271,41 +285,44 @@ export default function StockTracker() {
     }
   }, [portfolioHistory, pnl.totalInvested, isDark])
 
-  /* ── Benchmark comparison — useMemo, only recomputes when user changes
-     timeRange or selected indices. Portfolio curve uses actual total return
-     distributed evenly — deterministic, no random numbers.                  */
-  /* ── Benchmark comparison — all real data rebased to 100 ── */
-  const { benchmarkData, myReturn, beatingPrimary } = useMemo(() => {
-    const empty = { benchmarkData: { labels: [] as string[], datasets: [] }, myReturn: 0, beatingPrimary: false }
+  /* ── Benchmark comparison ────────────────────────────────────────────────
+     Both portfolio and index values are in ACTUAL RUPEES (₹).
+     Index value = "if you had invested ₹totalInvested in this index
+                    on the date you made your first stock purchase"
+     This gives a true apples-to-apples comparison.
+  ── */
+  const { benchmarkData, myReturn, primaryIndexReturn, beatingPrimary } = useMemo(() => {
+    const empty = {
+      benchmarkData: { labels: [] as string[], datasets: [] },
+      myReturn: 0, primaryIndexReturn: 0, beatingPrimary: false,
+    }
     if (!portfolioHistory.length) return empty
 
-    // Rebase portfolio: first point = 100
-    const portRebased = rebaseTo100(portfolioHistory)
-    if (!portRebased.length) return empty
-
-    const fmt = portRebased.length > 90
+    const n   = portfolioHistory.length
+    const fmt = n > 90
       ? (d: string) => new Date(d).toLocaleDateString('en-IN', { month:'short', year:'2-digit' })
       : (d: string) => new Date(d).toLocaleDateString('en-IN', { day:'2-digit', month:'short' })
 
-    const labels = portRebased.map(p => fmt(p.date))
-    const myRet  = (portRebased[portRebased.length - 1]?.close || 100) - 100
+    const labels   = portfolioHistory.map(p => fmt(p.date))
+    const portFirst = portfolioHistory[0].close
+    const portLast  = portfolioHistory[portfolioHistory.length - 1].close
+    const myRet     = portFirst > 0 ? ((portLast - portFirst) / portFirst) * 100 : 0
 
-    // For each index: rebase to 100 from its own first date
-    // Then align to portfolio dates (use nearest available value)
+    // Build index datasets — already in ₹ (fetchIndexInvestedValue)
     const indexDatasets = benchmarkIndices
       .filter(id => (indexHistories[id]?.length || 0) > 0)
       .map(id => {
-        const idx      = INDEX_TICKERS[id]
-        const rebased  = rebaseTo100(indexHistories[id])
-        const idxMap   = new Map(rebased.map(p => [p.date, p.close]))
+        const idx    = INDEX_TICKERS[id]
+        const idxPts = indexHistories[id]
+        const idxMap = new Map(idxPts.map(p => [p.date, p.close]))
 
-        // Align index to portfolio dates — fill forward if date missing
+        // Align index dates to portfolio dates
         const aligned: number[] = []
-        let lastVal = 100
-        for (const { date } of portRebased) {
+        let lastVal = idxPts[0]?.close || portFirst
+        for (const { date } of portfolioHistory) {
           const v = idxMap.get(date)
           if (v !== undefined) { lastVal = v; aligned.push(v) }
-          else { aligned.push(lastVal) }  // fill forward
+          else { aligned.push(lastVal) }
         }
 
         return {
@@ -314,33 +331,37 @@ export default function StockTracker() {
           borderColor: idx.color,
           backgroundColor: 'transparent',
           fill: false, tension: 0.4,
-          pointRadius: portRebased.length > 60 ? 0 : 2,
+          pointRadius: n > 60 ? 0 : 2,
           borderWidth: 1.8,
         }
       })
 
-    const primaryIdx   = benchmarkIndices.find(id => indexHistories[id]?.length > 0)
-    const primaryRet   = primaryIdx
-      ? (rebaseTo100(indexHistories[primaryIdx]).slice(-1)[0]?.close || 100) - 100 : 0
+    // Primary index return for beating badge
+    const primaryId  = benchmarkIndices.find(id => (indexHistories[id]?.length || 0) > 0)
+    const primPts    = primaryId ? indexHistories[primaryId] : []
+    const primFirst  = primPts[0]?.close || 1
+    const primLast   = primPts[primPts.length - 1]?.close || primFirst
+    const primRet    = primFirst > 0 ? ((primLast - primFirst) / primFirst) * 100 : 0
 
     return {
       benchmarkData: {
         labels,
         datasets: [
           {
-            label: 'My Portfolio',
-            data:  portRebased.map(p => p.close),
+            label: 'My Portfolio (₹)',
+            data:  portfolioHistory.map(p => p.close),
             borderColor: '#8B5CF6',
             backgroundColor: 'rgba(139,92,246,0.07)',
             fill: true, tension: 0.4,
-            pointRadius: portRebased.length > 60 ? 0 : 2,
+            pointRadius: n > 60 ? 0 : 2,
             borderWidth: 2.5,
           },
           ...indexDatasets,
         ],
       },
-      myReturn: myRet,
-      beatingPrimary: myRet > primaryRet,
+      myReturn:           myRet,
+      primaryIndexReturn: primRet,
+      beatingPrimary:     myRet > primRet,
     }
   }, [portfolioHistory, indexHistories, benchmarkIndices])
 
@@ -545,9 +566,30 @@ export default function StockTracker() {
           <div className={styles.strip}>
             {[
               { label: 'Invested',    val: fL(pnl.totalInvested), color: 'var(--text-primary)' },
-              { label: 'Current',     val: quotes.size > 0 ? fL(pnl.currentValue) : '···', color: 'var(--brand)' },
-              { label: 'Total P&L',   val: quotes.size > 0 ? (pnl.totalPnL >= 0 ? '+' : '') + fL(pnl.totalPnL) : '···', sub: quotes.size > 0 ? (pnl.totalPnLPct >= 0 ? '+' : '') + pnl.totalPnLPct.toFixed(2) + '%' : 'Loading live prices', color: pnl.totalPnL >= 0 ? 'var(--pos)' : 'var(--neg)' },
-              { label: isMarketOpen() ? "Today's P&L" : "Last Session P&L", val: quotes.size > 0 ? (pnl.dayPnL >= 0 ? '+' : '') + fL(pnl.dayPnL) : '···', sub: quotes.size > 0 ? (pnl.dayPnLPct >= 0 ? '+' : '') + pnl.dayPnLPct.toFixed(2) + '%' : isMarketOpen() ? 'Market open' : 'Market closed', color: pnl.dayPnL >= 0 ? 'var(--pos)' : 'var(--neg)' },
+              {
+                label: 'Current',
+                val:   quotes.size > 0 ? fL(pnl.currentValue) : '···',
+                sub:   quotes.size > 0 && updatedAt
+                  ? `as of ${updatedAt.toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', hour12: true })} · ${isMarketOpen() ? 'Live' : 'Last close'}`
+                  : quotes.size > 0 ? 'Loaded' : 'Fetching live prices…',
+                color: 'var(--brand)',
+              },
+              {
+                label: 'Total P&L',
+                val:   quotes.size > 0 ? (pnl.totalPnL >= 0 ? '+' : '') + fL(pnl.totalPnL) : '···',
+                sub:   quotes.size > 0
+                  ? (pnl.totalPnLPct >= 0 ? '+' : '') + pnl.totalPnLPct.toFixed(2) + '% overall'
+                  : 'Waiting for prices',
+                color: pnl.totalPnL >= 0 ? 'var(--pos)' : 'var(--neg)',
+              },
+              {
+                label: isMarketOpen() ? "Today's P&L" : "Last Session P&L",
+                val:   quotes.size > 0 ? (pnl.dayPnL >= 0 ? '+' : '') + fL(pnl.dayPnL) : '···',
+                sub:   quotes.size > 0 && isMarketOpen()
+                  ? (pnl.dayPnLPct >= 0 ? '+' : '') + pnl.dayPnLPct.toFixed(2) + '% today'
+                  : quotes.size > 0 ? 'Market closed · ₹0 change' : 'Market closed',
+                color: pnl.dayPnL >= 0 ? 'var(--pos)' : 'var(--neg)',
+              },
             ].map(c => (
               <div key={c.label} className={styles.sCard}>
                 <div className={styles.sLabel}>{c.label}</div>
@@ -943,7 +985,7 @@ export default function StockTracker() {
               <div>
                 <div className={styles.chartTitle}>Portfolio vs Benchmark</div>
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
-                  Rebased to 100 · select indices and time range to compare
+                  If you had invested <strong style={{ color: 'var(--text-primary)' }}>{fL(pnl.totalInvested)}</strong> in each index on your first buy date — how would it compare to your portfolio?
                 </div>
               </div>
               {portfolioHistory.length > 0 && (
@@ -1038,18 +1080,14 @@ export default function StockTracker() {
                   },
                   y: {
                     grid: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)' },
-                    // Show as % gain/loss from base 100
                     ticks: {
                       color: isDark ? '#6B6486' : '#8875B5',
-                      font: { size: 11 },
-                      callback: (v: string | number) => {
-                        const val = Number(v) - 100
-                        return (val >= 0 ? '+' : '') + val.toFixed(0) + '%'
-                      },
+                      font: { size: 10 },
+                      callback: (v: string | number) => fL(Number(v)),
                     },
                     title: {
                       display: true,
-                      text: 'Return (Base = 0%)',
+                      text: 'Value (₹) — same initial investment',
                       color: isDark ? '#6B6486' : '#8875B5',
                       font: { size: 10 },
                     },
@@ -1063,16 +1101,13 @@ export default function StockTracker() {
                   tooltip: {
                     callbacks: {
                       title: (items) => items[0]?.label || '',
-                      label: (ctx) => {
-                        const ret = Number(ctx.raw) - 100
-                        return ` ${ctx.dataset.label}: ${ret >= 0 ? '+' : ''}${ret.toFixed(2)}%`
-                      },
+                      label: (ctx) => ` ${ctx.dataset.label}: ${fL(Number(ctx.raw))}`,
                     },
-                    mode: 'index',
+                    mode: 'index' as const,
                     intersect: false,
                   },
                 },
-                interaction: { mode: 'index', intersect: false },
+                interaction: { mode: 'index' as const, intersect: false },
               } as never} />
             </div>
             )}
@@ -1083,25 +1118,33 @@ export default function StockTracker() {
                 {/* My portfolio card */}
                 <div style={{ background: 'var(--bg-tertiary)', borderRadius: 12, padding: '12px 14px', borderLeft: '3px solid #8B5CF6' }}>
                   <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>My Portfolio</div>
-                  <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--mono)', color: myReturn >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                  <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'var(--mono)', color: myReturn >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
                     {myReturn >= 0 ? '+' : ''}{myReturn.toFixed(2)}%
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{timeRange} return (real)</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 3 }}>
+                    {portfolioHistory.length > 0 ? fL(portfolioHistory[portfolioHistory.length-1].close) : '—'}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{timeRange} return</div>
                 </div>
                 {/* Index cards — only show indices with real data */}
                 {benchmarkIndices.filter(id => (indexHistories[id]?.length || 0) > 0).map(id => {
-                  const idx = INDEX_TICKERS[id]
-                  const rebased = rebaseTo100(indexHistories[id] || [])
-                  const ret = rebased.length > 0 ? (rebased[rebased.length - 1]?.close || 100) - 100 : 0
-                  const alpha = myReturn - ret
+                  const idx     = INDEX_TICKERS[id]
+                  const idxPts  = indexHistories[id]
+                  const first   = idxPts[0]?.close || 1
+                  const last    = idxPts[idxPts.length-1]?.close || first
+                  const ret     = first > 0 ? ((last - first) / first) * 100 : 0
+                  const alpha   = myReturn - ret
                   return (
                     <div key={id} style={{ background: 'var(--bg-tertiary)', borderRadius: 12, padding: '12px 14px', borderLeft: `3px solid ${idx.color}` }}>
                       <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>{idx.label}</div>
-                      <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--mono)', color: ret >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'var(--mono)', color: ret >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
                         {ret >= 0 ? '+' : ''}{ret.toFixed(2)}%
                       </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 3 }}>
+                        {fL(last)} <span style={{ fontSize: 10 }}>(if invested {fL(first)})</span>
+                      </div>
                       <div style={{ fontSize: 11, marginTop: 4 }}>
-                        <span style={{ color: alpha >= 0 ? 'var(--pos)' : 'var(--neg)', fontWeight: 600 }}>
+                        <span style={{ color: alpha >= 0 ? 'var(--pos)' : 'var(--neg)', fontWeight: 600, fontSize: 12 }}>
                           {alpha >= 0 ? '▲' : '▼'} Alpha {alpha >= 0 ? '+' : ''}{alpha.toFixed(2)}%
                         </span>
                       </div>
@@ -1112,7 +1155,7 @@ export default function StockTracker() {
             )}
 
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10, padding: '8px 0 0', borderTop: '1px solid var(--border)', lineHeight: 1.6 }}>
-              Data sourced from Yahoo Finance. Portfolio value uses actual closing prices per stock. Index data may be delayed up to 15 minutes during market hours.
+              Index lines show: "If you had invested {fL(pnl.totalInvested)} in this index on your first purchase date, what would it be worth?" · Data from Yahoo Finance · Delayed ~15 min
             </div>
           </div>
         </>
