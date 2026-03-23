@@ -92,6 +92,7 @@ export default function StockTracker() {
   const [indexHistories,   setIndexHistories]   = useState<Record<string, HistPoint[]>>({})
   const [histLoading,      setHistLoading]      = useState(false)
   const [histError,        setHistError]        = useState<string | null>(null)
+  const [quoteError,       setQuoteError]       = useState<string | null>(null)
   const healthRef = useRef<HTMLDivElement>(null)
 
   /* ── Close health tooltip on outside click ── */
@@ -108,32 +109,36 @@ export default function StockTracker() {
   /* ── Fetch quotes ── */
   const loadQuotes = useCallback(async (list: StockHolding[], forceRefresh = false) => {
     if (!list.length) { setLoading(false); setRefreshing(false); return }
-    if (forceRefresh) {
-      clearQuoteCache()  // bust the cache so we actually fetch fresh prices
-    }
-    try {
-      // Fire all quote requests simultaneously
-      // setQuotes is called as each price arrives — UI updates stock by stock
-      await Promise.allSettled(
-        list.map(h =>
-          fetchLiveQuote(h.symbol, h.exchange).then(q => {
-            if (q) {
-              setQuotes(prev => {
-                const next = new Map(prev)
-                next.set(h.symbol, q)
-                return next
-              })
-            }
-          })
-        )
+    if (forceRefresh) clearQuoteCache()
+    setQuoteError(null)
+
+    let loaded = 0
+    const results = await Promise.allSettled(
+      list.map(h =>
+        fetchLiveQuote(h.symbol, h.exchange).then(q => {
+          if (q) {
+            loaded++
+            setQuotes(prev => {
+              const next = new Map(prev)
+              next.set(h.symbol, q)
+              return next
+            })
+          }
+          return q
+        })
       )
-      setUpdatedAt(new Date())
-    } catch(e) {
-      console.error('[kfin] loadQuotes error:', e)
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
+    )
+
+    const failed = results.filter(r => r.status === 'rejected' || !('value' in r) || !r.value).length
+    if (loaded === 0) {
+      setQuoteError(`Could not fetch prices. Check your connection. (${failed}/${list.length} failed)`)
+    } else if (failed > 0) {
+      console.warn(`[kfin] ${failed}/${list.length} quotes failed`)
     }
+
+    setUpdatedAt(new Date())
+    setLoading(false)
+    setRefreshing(false)
   }, [])
 
   // Load quotes on mount + whenever holdings change
@@ -415,26 +420,29 @@ export default function StockTracker() {
     interaction: { mode: 'index' as const, intersect: false },
   })
 
-  /* ── Mini sparkline — only draw when quote exists, flat line otherwise ── */
+  /* ── Mini sparkline — draws prev_close→ltp arc when quote loaded ── */
   const sparkData = (h: StockWithQuote) => {
-    const hasQuote = h.quote && isFinite(h.quote.ltp) && h.quote.ltp > 0
-    const ltp  = hasQuote ? h.quote!.ltp : h.avg_buy_price
-    const prev = hasQuote ? (h.quote!.prev_close || h.avg_buy_price) : h.avg_buy_price
-    const color = h.pnl > 0 ? '#10B981' : h.pnl < 0 ? '#EF4444' : '#6B7280'
+    const q      = h.quote
+    const hasQ   = q && isFinite(q.ltp) && q.ltp > 0
+    const ltp    = hasQ ? q!.ltp  : h.avg_buy_price
+    const prev   = hasQ ? (q!.prev_close || h.avg_buy_price) : h.avg_buy_price
+    const open   = hasQ ? (q!.open  || prev) : prev
+    const high   = hasQ ? (q!.high  || Math.max(prev, ltp)) : ltp
+    const low    = hasQ ? (q!.low   || Math.min(prev, ltp)) : ltp
+    const color  = h.pnl > 0 ? '#10B981' : h.pnl < 0 ? '#EF4444' : '#8B5CF6'
 
-    // Build a simple 2-point line: prev_close → ltp (accurate, no sine wave)
-    // If no quote, flat line at avg_buy_price
-    const data = hasQuote
-      ? [prev, prev, prev, (prev + ltp) / 2, ltp, ltp]
-      : [ltp, ltp, ltp, ltp, ltp, ltp]
+    // 6 points showing open → high/low midpoints → close arc
+    const data = hasQ
+      ? [prev, open, (open + high) / 2, (open + low) / 2, (ltp + prev) / 2, ltp]
+      : [h.avg_buy_price, h.avg_buy_price]  // flat when no data
 
     return {
-      labels: data.map((_, i) => i),
+      labels: data.map((_, i) => String(i)),
       datasets: [{
         data,
-        borderColor: hasQuote ? color : 'var(--border)',
-        backgroundColor: hasQuote ? color + '18' : 'transparent',
-        fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2,
+        borderColor: hasQ ? color : isDark ? '#2D2B3D' : '#D1D5DB',
+        backgroundColor: hasQ ? color + '15' : 'transparent',
+        fill: hasQ, tension: 0.5, pointRadius: 0, borderWidth: hasQ ? 2 : 1,
       }],
     }
   }
@@ -586,11 +594,13 @@ export default function StockTracker() {
               { label: 'Invested',    val: fL(pnl.totalInvested), color: 'var(--text-primary)' },
               {
                 label: 'Current',
-                val:   quotes.size > 0 ? fL(pnl.currentValue) : '···',
-                sub:   quotes.size > 0 && updatedAt
-                  ? `as of ${updatedAt.toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', hour12: true })} · ${isMarketOpen() ? 'Live' : 'Last close'}`
-                  : quotes.size > 0 ? 'Loaded' : 'Fetching live prices…',
-                color: 'var(--brand)',
+                val:   quotes.size > 0 ? fL(pnl.currentValue) : quoteError ? '—' : '···',
+                sub:   quoteError
+                  ? quoteError
+                  : quotes.size > 0 && updatedAt
+                    ? `as of ${updatedAt.toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', hour12: true })} · ${isMarketOpen() ? 'Live' : 'Last close'}`
+                    : 'Fetching live prices…',
+                color: quoteError ? 'var(--neg)' : 'var(--brand)',
               },
               {
                 label: 'Total P&L',
