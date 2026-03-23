@@ -5,7 +5,7 @@ import {
   LineElement, Tooltip, Filler, ArcElement, Legend,
 } from 'chart.js'
 import {
-  fetchMultipleQuotes, computePortfolioPnL, computeHealthScore,
+  fetchLiveQuote, fetchMultipleQuotes, computePortfolioPnL, computeHealthScore,
   searchStocks, POPULAR_STOCKS, isMarketOpen,
   fetchPortfolioHistory, fetchIndexHistory, fetchIndexInvestedValue, rebaseTo100,
   INDEX_TICKERS, INDEX_GROUPS, TIME_RANGES,
@@ -109,8 +109,23 @@ export default function StockTracker() {
   const loadQuotes = useCallback(async (list: StockHolding[]) => {
     if (!list.length) { setLoading(false); return }
     try {
-      const map = await fetchMultipleQuotes(list.map(h => ({ symbol: h.symbol, exchange: h.exchange })))
-      setQuotes(map)
+      // Fire all quote requests simultaneously — update map as each arrives
+      const partialMap = new Map<string, LiveQuote>()
+      await Promise.allSettled(
+        list.map(h =>
+          fetchLiveQuote(h.symbol, h.exchange).then(q => {
+            if (q) {
+              partialMap.set(h.symbol, q)
+              // Update state immediately on each arrival so UI shows prices as they load
+              setQuotes(prev => {
+                const next = new Map(prev)
+                next.set(h.symbol, q)
+                return next
+              })
+            }
+          })
+        )
+      )
       setUpdatedAt(new Date())
     } finally {
       setLoading(false)
