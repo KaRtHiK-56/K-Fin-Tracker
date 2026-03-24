@@ -315,10 +315,14 @@ export function computePortfolioPnL(holdings: StockHolding[], quotes: Map<string
     const inv = h.quantity * h.avg_buy_price
     totalInvested += inv
     const q = quotes.get(h.symbol)
-    if (q && isFinite(q.ltp) && q.ltp > 0) {
+    // Only use LIVE quotes (last_updated !== 'csv') for current value calculation
+    // Stub/CSV quotes exist only to show avg_buy_price in the table — not for P&L
+    const isLive = q && q.last_updated !== 'csv' && isFinite(q.ltp) && q.ltp > 0
+    if (isLive && q) {
       currentValue += h.quantity * q.ltp
       if (marketOpen && isFinite(q.change)) dayPnL += h.quantity * q.change
     } else {
+      // No live price yet — use invested value so P&L shows 0, not fake numbers
       currentValue += inv
     }
   })
@@ -332,7 +336,11 @@ export function computePortfolioPnL(holdings: StockHolding[], quotes: Map<string
 export function computeHealthScore(holdings: StockHolding[], quotes: Map<string, LiveQuote>): HealthScore {
   if (!holdings.length) return { overall:0, risk_level:'Low', top_holding_pct:0, sector_count:0 }
   const sectors  = new Set(holdings.map(h => h.sector || 'Other'))
-  const vals     = holdings.map(h => h.quantity * (quotes.get(h.symbol)?.ltp ?? h.avg_buy_price))
+  const vals     = holdings.map(h => {
+    const q = quotes.get(h.symbol)
+    const ltp = (q && q.last_updated !== 'csv') ? q.ltp : h.avg_buy_price
+    return h.quantity * ltp
+  })
   const totalVal = vals.reduce((s, v) => s + v, 0)
   const topPct   = totalVal > 0 ? (Math.max(...vals) / totalVal) * 100 : 0
   const winners  = holdings.filter(h => (quotes.get(h.symbol)?.change_pct ?? 0) >= 0).length
