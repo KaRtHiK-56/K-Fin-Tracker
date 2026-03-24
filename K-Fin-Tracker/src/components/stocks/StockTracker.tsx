@@ -323,62 +323,70 @@ export default function StockTracker() {
   ── */
   const pnlLineData = useMemo(() => {
     const totalInvested = pnl.totalInvested || 0
-    if (!portfolioHistory.length || totalInvested === 0) return null
+    if (totalInvested === 0) return null
 
-    const n   = portfolioHistory.length
-    const fmt = n > 90
-      ? (d: string) => new Date(d).toLocaleDateString('en-IN', { month:'short', year:'2-digit' })
-      : (d: string) => new Date(d).toLocaleDateString('en-IN', { day:'2-digit', month:'short' })
-
-    const labels   = portfolioHistory.map(p => fmt(p.date))
-    const portVals = portfolioHistory.map(p => p.close)
-
-    // ── Cumulative invested line ────────────────────────────────────────────
-    // On each date, sum up (qty × avg_buy_price) for all holdings bought
-    // ON OR BEFORE that date. This shows the step-wise capital deployment.
-    // Example: bought TATAMOTORS on Apr 1 → step up. Bought ITC on Jun 1 → step up again.
-    const buyEvents = holdings
-      .map(h => ({
-        date:     h.buy_date || portfolioHistory[0].date,
-        amount:   h.quantity * h.avg_buy_price,
-      }))
+    // ── Sort buy events by date ────────────────────────────────────────────
+    const buyEvents = [...holdings]
+      .map(h => ({ date: h.buy_date || '', amount: h.quantity * h.avg_buy_price }))
+      .filter(e => e.date)
       .sort((a, b) => a.date.localeCompare(b.date))
 
-    const invLine = portfolioHistory.map(({ date }) => {
-      return buyEvents
-        .filter(e => e.date <= date)
-        .reduce((sum, e) => sum + e.amount, 0)
-    })
+    if (!buyEvents.length) return null
 
-    // If all buys are before the chart start date, invLine will be flat
-    // (all capital deployed before the chart period) — that's correct
-    const firstNonZero = invLine.findIndex(v => v > 0)
-    const effectiveInvLine = firstNonZero >= 0
-      ? invLine.map((v, i) => i < firstNonZero ? invLine[firstNonZero] : v)
-      : invLine.map(() => totalInvested)
+    const firstBuy = buyEvents[0].date
+
+    if (portfolioHistory.length > 0) {
+      // We have real price history — use it
+      const n   = portfolioHistory.length
+      const fmt = n > 90
+        ? (d: string) => new Date(d).toLocaleDateString('en-IN', { month:'short', year:'2-digit' })
+        : (d: string) => new Date(d).toLocaleDateString('en-IN', { day:'2-digit', month:'short' })
+
+      const labels   = portfolioHistory.map(p => fmt(p.date))
+      const portVals = portfolioHistory.map(p => p.close)
+
+      // Cumulative invested on each date
+      const invLine = portfolioHistory.map(({ date }) =>
+        buyEvents.filter(e => e.date <= date).reduce((s, e) => s + e.amount, 0)
+      )
+      // Fill forward from first buy if all buys precede chart start
+      const firstNZ = invLine.findIndex(v => v > 0)
+      const effInv  = firstNZ >= 0
+        ? invLine.map((v, i) => i < firstNZ ? invLine[firstNZ] : v)
+        : invLine.map(() => totalInvested)
+
+      return {
+        labels,
+        datasets: [
+          { label: 'Portfolio Value (₹)', data: portVals, borderColor: '#8B5CF6', backgroundColor: 'rgba(139,92,246,0.10)', fill: true, tension: 0.4, pointRadius: n > 60 ? 0 : 2, borderWidth: 2 },
+          { label: `Invested (${fL(totalInvested)})`, data: effInv, borderColor: '#F59E0B', backgroundColor: 'rgba(245,158,11,0.06)', fill: true, tension: 0.2, pointRadius: 0, borderDash: [5, 3], borderWidth: 1.5 },
+        ],
+      }
+    }
+
+    // No price history yet — show just the invested timeline from CSV data
+    // Generate daily dates from first buy to today
+    const today  = new Date().toISOString().split('T')[0]
+    const dates: string[] = []
+    const d = new Date(firstBuy)
+    while (d.toISOString().split('T')[0] <= today) {
+      dates.push(d.toISOString().split('T')[0])
+      d.setDate(d.getDate() + 7) // weekly to keep chart manageable
+    }
+    if (!dates.includes(today)) dates.push(today)
+
+    const fmt = dates.length > 90
+      ? (s: string) => new Date(s).toLocaleDateString('en-IN', { month:'short', year:'2-digit' })
+      : (s: string) => new Date(s).toLocaleDateString('en-IN', { day:'2-digit', month:'short' })
+
+    const invLine = dates.map(date =>
+      buyEvents.filter(e => e.date <= date).reduce((s, e) => s + e.amount, 0)
+    )
 
     return {
-      labels,
+      labels: dates.map(fmt),
       datasets: [
-        {
-          label: 'Portfolio Value (₹)',
-          data:  portVals,
-          borderColor: '#8B5CF6',
-          backgroundColor: 'rgba(139,92,246,0.10)',
-          fill: true, tension: 0.4,
-          pointRadius: n > 60 ? 0 : 2,
-          borderWidth: 2,
-        },
-        {
-          label: `Invested (${fL(totalInvested)} total)`,
-          data:  effectiveInvLine,
-          borderColor: '#F59E0B',
-          backgroundColor: 'rgba(245,158,11,0.06)',
-          fill: true, tension: 0.2,
-          pointRadius: 0,
-          borderDash: [5, 3],
-          borderWidth: 1.5,
-        },
+        { label: `Invested (${fL(totalInvested)})`, data: invLine, borderColor: '#F59E0B', backgroundColor: 'rgba(245,158,11,0.06)', fill: true, tension: 0.2, pointRadius: 0, borderDash: [5, 3], borderWidth: 1.5 },
       ],
     }
   }, [portfolioHistory, holdings, pnl.totalInvested, isDark])
@@ -395,6 +403,8 @@ export default function StockTracker() {
       myReturn: 0, primaryIndexReturn: 0, beatingPrimary: false,
     }
     if (!portfolioHistory.length) return empty
+    // Check if we have any index data at all
+    const hasAnyIndex = benchmarkIndices.some(id => (indexHistories[id]?.length || 0) > 1)
 
     const n   = portfolioHistory.length
     const fmt = n > 90
@@ -895,52 +905,42 @@ export default function StockTracker() {
                   <button onClick={() => setSelected(null)} style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-tertiary)', cursor: 'pointer' }}>✕</button>
                 </div>
               <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 12 }}>
-                  {(() => {
-                    const q = selected.quote
-                    const isLive = q && q.last_updated !== 'csv'
-                    const isStub = q && q.last_updated === 'csv'
-                    if (isLive && q) {
-                      return (
-                        <>
-                          <div style={{ fontSize: 26, fontWeight: 700, fontFamily: 'var(--mono)' }}>{fi(q.ltp)}</div>
-                          <div style={{ fontSize: 13, fontWeight: 600, marginTop: 2, color: q.change >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
-                            {q.change >= 0 ? '▲' : '▼'} {q.change >= 0 ? '+' : ''}{q.change.toFixed(2)} ({q.change_pct >= 0 ? '+' : ''}{q.change_pct.toFixed(2)}%)
-                          </div>
-                        </>
-                      )
-                    }
-                    if (isStub && q) {
-                      return (
-                        <>
-                          <div style={{ fontSize: 26, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--text-secondary)' }}>{fi(q.ltp)}</div>
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--brand)', display: 'inline-block', animation: 'pulse 1.5s infinite' }} />
-                            Avg cost shown · fetching live price…
-                          </div>
-                        </>
-                      )
-                    }
-                    return (
-                      <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>
-                        <span style={{ fontSize: 20, fontFamily: 'var(--mono)', color: 'var(--text-muted)' }}>···</span>
-                        <div style={{ fontSize: 11, marginTop: 4 }}>Loading…</div>
+                  {selected.quote && selected.quote.last_updated !== 'csv' ? (
+                    <>
+                      <div style={{ fontSize: 26, fontWeight: 700, fontFamily: 'var(--mono)' }}>
+                        {fi(selected.quote.ltp)}
                       </div>
-                    )
-                  })()}
+                      <div style={{ fontSize: 13, fontWeight: 600, marginTop: 2, color: selected.quote.change >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                        {selected.quote.change >= 0 ? '▲' : '▼'} {selected.quote.change >= 0 ? '+' : ''}{selected.quote.change.toFixed(2)} ({selected.quote.change_pct >= 0 ? '+' : ''}{selected.quote.change_pct.toFixed(2)}%)
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 3 }}>
+                        Updated {new Date(selected.quote.last_updated).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                      </div>
+                    </>
+                  ) : (
+                    <div>
+                      <div style={{ fontSize: 26, fontWeight: 700, fontFamily: 'var(--mono)', color: 'var(--text-tertiary)' }}>
+                        {fi(selected.avg_buy_price)}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                        Avg cost · live price loading…
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div style={{ height: 120 }}>
                   <Line key={selected.id} data={sparkData(selected)} options={sparkOpts as never} />
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, background: 'var(--bg-tertiary)', borderRadius: 12, padding: 10 }}>
                   {[
-                    { l: 'Open',      v: selected.quote ? fi(selected.quote.open) : '—', c: '' },
-                    { l: 'High',      v: selected.quote ? fi(selected.quote.high) : '—', c: 'var(--pos)' },
-                    { l: 'Low',       v: selected.quote ? fi(selected.quote.low) : '—', c: 'var(--neg)' },
-                    { l: 'Prev Close',v: selected.quote ? fi(selected.quote.prev_close) : '—', c: '' },
+                    { l: 'Open',      v: selected.quote?.last_updated !== 'csv' && selected.quote ? fi(selected.quote.open) : '—', c: '' },
+                    { l: 'High',      v: selected.quote?.last_updated !== 'csv' && selected.quote ? fi(selected.quote.high) : '—', c: 'var(--pos)' },
+                    { l: 'Low',       v: selected.quote?.last_updated !== 'csv' && selected.quote ? fi(selected.quote.low) : '—', c: 'var(--neg)' },
+                    { l: 'Prev Close',v: selected.quote?.last_updated !== 'csv' && selected.quote ? fi(selected.quote.prev_close) : '—', c: '' },
                     { l: '52W High',  v: selected.quote?.week_52_high ? fi(selected.quote.week_52_high) : '—', c: 'var(--pos)' },
-                    { l: '52W Low',   v: selected.quote?.week_52_low ? fi(selected.quote.week_52_low) : '—', c: 'var(--neg)' },
+                    { l: '52W Low',   v: selected.quote?.week_52_low  ? fi(selected.quote.week_52_low)  : '—', c: 'var(--neg)' },
                     { l: 'P/E',       v: selected.quote?.pe_ratio ? selected.quote.pe_ratio.toFixed(1) : '—', c: '' },
-                    { l: 'Volume',    v: selected.quote ? (selected.quote.volume / 1e5).toFixed(1) + 'L' : '—', c: '' },
+                    { l: 'Volume',    v: selected.quote?.last_updated !== 'csv' && selected.quote?.volume ? (selected.quote.volume / 1e5).toFixed(1) + 'L' : '—', c: '' },
                   ].map(({ l, v, c }) => (
                     <div key={l}>
                       <div style={{ fontSize: 10.5, color: 'var(--text-tertiary)' }}>{l}</div>
@@ -1106,7 +1106,7 @@ export default function StockTracker() {
               <div>
                 <div className={styles.chartTitle}>Portfolio vs Benchmark</div>
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
-                  If you had invested <strong style={{ color: 'var(--text-primary)' }}>{fL(pnl.totalInvested)}</strong> in each index on your first buy date — how would it compare to your portfolio?
+                  Simulates buying the selected index on each of your stock purchase dates with the same ₹ amounts — vs your actual portfolio performance
                 </div>
               </div>
               {portfolioHistory.length > 0 && (
