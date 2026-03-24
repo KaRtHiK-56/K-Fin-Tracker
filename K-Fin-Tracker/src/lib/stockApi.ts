@@ -141,7 +141,13 @@ export async function fetchLiveQuote(
     return hit.data
   }
 
-  const ticker = exchange === 'BSE' ? `${symbol}.BO` : `${symbol}.NS`
+  // Normalize symbol (fix spaces like "Tata Motors")
+  const cleanSymbol = symbol.toUpperCase().replace(/\s+/g, '')
+
+  const ticker =
+    exchange === 'BSE'
+      ? `${cleanSymbol}.BO`
+      : `${cleanSymbol}.NS`
 
   try {
     const res  = await fetch(`/api/quote?symbol=${encodeURIComponent(ticker)}`)
@@ -152,7 +158,32 @@ export async function fetchLiveQuote(
 
     const d = (json.data ?? json) as Record<string, unknown>
     const q = parseYF(d, symbol, exchange)
-    if (!q) throw new Error('parseYF returned null')
+    let q = parseYF(d, symbol, exchange)
+
+    // If quote parsing failed, fallback to last close price
+    if (!q) {
+      const hist = await fetchHistory(ticker, '1mo', '1d')
+      const last = hist.at(-1)?.close
+
+      if (last) {
+        q = {
+          symbol,
+          company_name: symbol,
+          exchange,
+          ltp: last,
+          open: last,
+          high: last,
+          low: last,
+          prev_close: last,
+          change: 0,
+          change_pct: 0,
+          volume: 0,
+          last_updated: new Date().toISOString(),
+        }
+     }  else {
+        throw new Error('No fallback price available')
+      }
+    }
 
     quoteCache.set(key, { data: q, ts: Date.now() })
     console.log(`[kfin] ✓ ${symbol}: ₹${q.ltp} (${q.change_pct >= 0 ? '+' : ''}${q.change_pct.toFixed(2)}%) @ ${new Date().toLocaleTimeString('en-IN')}`)
