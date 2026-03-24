@@ -369,8 +369,11 @@ export default function StockTracker() {
       )
       // If all buys happened before the chart window starts, show totalInvested as flat
       // (This is correct — all capital was deployed before the selected period)
-      const allBeforeWindow = invLine.every(v => v === 0)
-      const effInv = allBeforeWindow ? portfolioHistory.map(() => totalInvested) : invLine
+      const allBeforeWindow = buyEvents.every(e => e.date < portfolioHistory[0].date)
+
+      const effInv = allBeforeWindow
+        ? portfolioHistory.map(() => totalInvested)
+        : invLine
 
       return {
         labels: portfolioHistory.map(p => fmt(p.date)),
@@ -465,7 +468,9 @@ export default function StockTracker() {
         for (const { date } of portTrimmed) {
           const v = idxMap.get(date)
           if (v !== undefined && v > 0) { lastVal = v; aligned.push(v) }
-          else { aligned.push(lastVal) }
+          else { const base = idxPts[0]?.close || 1
+                 const scaled = (v / base) * totalInvested
+                 aligned.push(scaled) }
         }
 
         return {
