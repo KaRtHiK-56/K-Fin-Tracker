@@ -230,14 +230,24 @@ export default function StockTracker() {
                 unitEvents.push({ date: buyDate, units })
               }
 
-              // Build daily value: for each date in the chart, sum up
-              // units × index_price for all buy events on or before that date
-              const result: HistPoint[] = idxHistory.map(p => {
-                const applicableUnits = unitEvents
-                  .filter(e => e.date <= p.date)
-                  .reduce((s, e) => s + e.units, 0)
-                return { date: p.date, close: +(applicableUnits * p.close).toFixed(2) }
-              }).filter(p => p.close > 0)
+              // Build daily ₹ value for the index simulation
+              // For each date in chart: value = sum(units bought up to that date) × current_index_price
+              // Only include dates from firstBuy onwards so the line starts where investment starts
+              const firstBuy = holdings
+                .map(h => h.buy_date || idxHistory[0].date)
+                .filter(Boolean)
+                .sort()[0] || idxHistory[0].date
+
+              const result: HistPoint[] = idxHistory
+                .filter(p => p.date >= firstBuy)   // start from first purchase date
+                .map(p => {
+                  const applicableUnits = unitEvents
+                    .filter(e => e.date <= p.date)
+                    .reduce((s, e) => s + e.units, 0)
+                  if (applicableUnits <= 0) return null
+                  return { date: p.date, close: +(applicableUnits * p.close).toFixed(2) }
+                })
+                .filter((p): p is HistPoint => p !== null)
 
               newIdx[id] = result
             } catch (e) {
@@ -330,69 +340,80 @@ export default function StockTracker() {
     const totalInvested = pnl.totalInvested || 0
     if (totalInvested === 0) return null
 
-    // ── Sort buy events by date ────────────────────────────────────────────
+    // Sort buy events chronologically
     const buyEvents = [...holdings]
       .map(h => ({ date: h.buy_date || '', amount: h.quantity * h.avg_buy_price }))
       .filter(e => e.date)
       .sort((a, b) => a.date.localeCompare(b.date))
-
     if (!buyEvents.length) return null
 
     const firstBuy = buyEvents[0].date
+    const today    = new Date().toISOString().split('T')[0]
 
+    // Build cumulative invested amount at any given date
+    const cumulativeAt = (date: string) =>
+      buyEvents.filter(e => e.date <= date).reduce((s, e) => s + e.amount, 0)
+
+    // ── CASE 1: We have real portfolio history from the API ────────────────
     if (portfolioHistory.length > 0) {
-      // We have real price history — use it
       const n   = portfolioHistory.length
       const fmt = n > 90
         ? (d: string) => new Date(d).toLocaleDateString('en-IN', { month:'short', year:'2-digit' })
         : (d: string) => new Date(d).toLocaleDateString('en-IN', { day:'2-digit', month:'short' })
 
-      const labels   = portfolioHistory.map(p => fmt(p.date))
-      const portVals = portfolioHistory.map(p => p.close)
-
-      // Cumulative invested on each date
-      const invLine = portfolioHistory.map(({ date }) =>
-        buyEvents.filter(e => e.date <= date).reduce((s, e) => s + e.amount, 0)
+      // The invested line must start from firstBuy, not from chart start
+      // For dates before firstBuy, show 0 (no capital deployed yet)
+      // For dates on/after firstBuy, show cumulative amount
+      const invLine = portfolioHistory.map(p =>
+        p.date >= firstBuy ? cumulativeAt(p.date) : 0
       )
-      // Fill forward from first buy if all buys precede chart start
-      const firstNZ = invLine.findIndex(v => v > 0)
-      const effInv  = firstNZ >= 0
-        ? invLine.map((v, i) => i < firstNZ ? invLine[firstNZ] : v)
-        : invLine.map(() => totalInvested)
+      // If all buys happened before the chart window starts, show totalInvested as flat
+      // (This is correct — all capital was deployed before the selected period)
+      const allBeforeWindow = invLine.every(v => v === 0)
+      const effInv = allBeforeWindow ? portfolioHistory.map(() => totalInvested) : invLine
 
       return {
-        labels,
+        labels: portfolioHistory.map(p => fmt(p.date)),
         datasets: [
-          { label: 'Portfolio Value (₹)', data: portVals, borderColor: '#8B5CF6', backgroundColor: 'rgba(139,92,246,0.10)', fill: true, tension: 0.4, pointRadius: n > 60 ? 0 : 2, borderWidth: 2 },
-          { label: `Invested (${fL(totalInvested)})`, data: effInv, borderColor: '#F59E0B', backgroundColor: 'rgba(245,158,11,0.06)', fill: true, tension: 0.2, pointRadius: 0, borderDash: [5, 3], borderWidth: 1.5 },
+          {
+            label: 'Portfolio Value (₹)',
+            data:  portfolioHistory.map(p => p.close),
+            borderColor: '#8B5CF6', backgroundColor: 'rgba(139,92,246,0.10)',
+            fill: true, tension: 0.4, pointRadius: n > 60 ? 0 : 2, borderWidth: 2,
+          },
+          {
+            label: `Cumulative Invested (${fL(totalInvested)})`,
+            data:  effInv,
+            borderColor: '#F59E0B', backgroundColor: 'rgba(245,158,11,0.08)',
+            fill: true, tension: 0.3, pointRadius: 0, borderDash: [5, 3], borderWidth: 2,
+          },
         ],
       }
     }
 
-    // No price history yet — show just the invested timeline from CSV data
-    // Generate daily dates from first buy to today
-    const today  = new Date().toISOString().split('T')[0]
+    // ── CASE 2: No price history yet — build invested timeline from CSV ────
+    // Generate weekly dates from FIRST BUY DATE to today
     const dates: string[] = []
-    const d = new Date(firstBuy)
-    while (d.toISOString().split('T')[0] <= today) {
-      dates.push(d.toISOString().split('T')[0])
-      d.setDate(d.getDate() + 7) // weekly to keep chart manageable
+    const cur = new Date(firstBuy)
+    while (cur.toISOString().split('T')[0] <= today) {
+      dates.push(cur.toISOString().split('T')[0])
+      cur.setDate(cur.getDate() + 7)
     }
-    if (!dates.includes(today)) dates.push(today)
+    if (dates[dates.length - 1] !== today) dates.push(today)
 
-    const fmt = dates.length > 90
+    const n   = dates.length
+    const fmt = n > 52
       ? (s: string) => new Date(s).toLocaleDateString('en-IN', { month:'short', year:'2-digit' })
       : (s: string) => new Date(s).toLocaleDateString('en-IN', { day:'2-digit', month:'short' })
 
-    const invLine = dates.map(date =>
-      buyEvents.filter(e => e.date <= date).reduce((s, e) => s + e.amount, 0)
-    )
-
     return {
       labels: dates.map(fmt),
-      datasets: [
-        { label: `Invested (${fL(totalInvested)})`, data: invLine, borderColor: '#F59E0B', backgroundColor: 'rgba(245,158,11,0.06)', fill: true, tension: 0.2, pointRadius: 0, borderDash: [5, 3], borderWidth: 1.5 },
-      ],
+      datasets: [{
+        label: `Cumulative Invested (${fL(totalInvested)})`,
+        data:  dates.map(cumulativeAt),
+        borderColor: '#F59E0B', backgroundColor: 'rgba(245,158,11,0.08)',
+        fill: true, tension: 0.3, pointRadius: 0, borderDash: [5, 3], borderWidth: 2,
+      }],
     }
   }, [portfolioHistory, holdings, pnl.totalInvested, isDark])
 
@@ -411,30 +432,39 @@ export default function StockTracker() {
     // Check if we have any index data at all
     const hasAnyIndex = benchmarkIndices.some(id => (indexHistories[id]?.length || 0) > 1)
 
-    const n   = portfolioHistory.length
+    // Find earliest date where we have BOTH portfolio AND at least one index
+    const hasIndex = benchmarkIndices.some(id => (indexHistories[id]?.length || 0) > 1)
+    const firstBuy = [...holdings]
+      .map(h => h.buy_date || '').filter(Boolean).sort()[0] || portfolioHistory[0].date
+
+    // Trim portfolioHistory to start from firstBuy
+    const portTrimmed = portfolioHistory.filter(p => p.date >= firstBuy)
+    if (!portTrimmed.length) return empty
+
+    const n   = portTrimmed.length
     const fmt = n > 90
       ? (d: string) => new Date(d).toLocaleDateString('en-IN', { month:'short', year:'2-digit' })
       : (d: string) => new Date(d).toLocaleDateString('en-IN', { day:'2-digit', month:'short' })
 
-    const labels   = portfolioHistory.map(p => fmt(p.date))
-    const portFirst = portfolioHistory[0].close
-    const portLast  = portfolioHistory[portfolioHistory.length - 1].close
+    const labels    = portTrimmed.map(p => fmt(p.date))
+    const portFirst = portTrimmed[0].close
+    const portLast  = portTrimmed[portTrimmed.length - 1].close
     const myRet     = portFirst > 0 ? ((portLast - portFirst) / portFirst) * 100 : 0
 
-    // Build index datasets — already in ₹ (fetchIndexInvestedValue)
+    // Build index datasets
     const indexDatasets = benchmarkIndices
-      .filter(id => (indexHistories[id]?.length || 0) > 0)
+      .filter(id => (indexHistories[id]?.length || 0) > 1)
       .map(id => {
         const idx    = INDEX_TICKERS[id]
-        const idxPts = indexHistories[id]
+        const idxPts = indexHistories[id]  // already trimmed from firstBuy in useEffect
         const idxMap = new Map(idxPts.map(p => [p.date, p.close]))
 
-        // Align index dates to portfolio dates
+        // Align to portfolio trimmed dates with fill-forward
         const aligned: number[] = []
         let lastVal = idxPts[0]?.close || portFirst
-        for (const { date } of portfolioHistory) {
+        for (const { date } of portTrimmed) {
           const v = idxMap.get(date)
-          if (v !== undefined) { lastVal = v; aligned.push(v) }
+          if (v !== undefined && v > 0) { lastVal = v; aligned.push(v) }
           else { aligned.push(lastVal) }
         }
 
@@ -449,8 +479,8 @@ export default function StockTracker() {
         }
       })
 
-    // Primary index return for beating badge
-    const primaryId  = benchmarkIndices.find(id => (indexHistories[id]?.length || 0) > 0)
+    // Return calculation
+    const primaryId  = benchmarkIndices.find(id => (indexHistories[id]?.length || 0) > 1)
     const primPts    = primaryId ? indexHistories[primaryId] : []
     const primFirst  = primPts[0]?.close || 1
     const primLast   = primPts[primPts.length - 1]?.close || primFirst
@@ -462,7 +492,7 @@ export default function StockTracker() {
         datasets: [
           {
             label: 'My Portfolio (₹)',
-            data:  portfolioHistory.map(p => p.close),
+            data:  portTrimmed.map(p => p.close),
             borderColor: '#8B5CF6',
             backgroundColor: 'rgba(139,92,246,0.07)',
             fill: true, tension: 0.4,
