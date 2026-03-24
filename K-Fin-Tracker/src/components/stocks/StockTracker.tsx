@@ -264,14 +264,19 @@ export default function StockTracker() {
   /* ── Enrich holdings with live data ── */
   const enrich = (h: StockHolding): StockWithQuote => {
     try {
-      const quote = quotes.get(h.symbol)
-      const ltp = (quote?.ltp && isFinite(quote.ltp)) ? quote.ltp : (h.avg_buy_price || 0)
-      const qty = h.quantity || 0
-      const avg = h.avg_buy_price || 0
-      const cv = qty * ltp
-      const iv = qty * avg
-      const pnl = cv - iv
-      const pnl_pct = iv > 0 ? (pnl / iv) * 100 : 0
+      const quote  = quotes.get(h.symbol)
+      const qty    = h.quantity || 0
+      const avg    = h.avg_buy_price || 0
+      const iv     = qty * avg
+
+      // Only use live quote for current value — stub quotes (last_updated='csv')
+      // exist only for table display, not for P&L calculation
+      const isLive = quote && quote.last_updated !== 'csv' && isFinite(quote.ltp) && quote.ltp > 0
+      const ltp    = isLive ? quote!.ltp : avg   // fall back to avg cost when no live price
+      const cv     = qty * ltp
+      const pnl    = isLive ? cv - iv : 0         // P&L is 0 until real price loads
+      const pnl_pct = isLive && iv > 0 ? (pnl / iv) * 100 : 0
+
       return { ...h, quote, current_value: cv, invested_value: iv, pnl, pnl_pct }
     } catch {
       return { ...h, quote: undefined, current_value: 0, invested_value: 0, pnl: 0, pnl_pct: 0 }
