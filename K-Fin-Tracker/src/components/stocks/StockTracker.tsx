@@ -197,59 +197,49 @@ export default function StockTracker() {
         const portHist = await fetchPortfolioHistory(holdings, period, interval)
         setPortfolioHistory(portHist)
 
-        // ── Index history: "what if I bought index on each buy date" ────────
-        // For each selected index, fetch its raw history then simulate
-        // buying index units on each stock purchase date with that stock's ₹ amount.
-        // This is the most accurate comparison possible.
+        // ── Index history: per-purchase simulation ────────────────────────
+        // Fetch MAX history for index so we always have data back to the buy date
+        // regardless of what timeRange the user has selected for the portfolio chart.
         const newIdx: Record<string, HistPoint[]> = {}
+        const firstBuyDate = [...holdings]
+          .map(h => h.buy_date || '').filter(Boolean).sort()[0] || '2020-01-01'
 
         await Promise.all(
           benchmarkIndices.map(async (id) => {
             try {
-              const idxHistory = await fetchIndexHistory(id, period, interval)
+              // Always fetch max history — ensures we cover all buy dates
+              const idxHistory = await fetchIndexHistory(id, 'max', '1wk')
               if (!idxHistory.length) return
 
-              const idxMap = new Map(idxHistory.map(p => [p.date, p.close]))
-
-              // Find nearest index date for each buy event
-              // Accumulate units bought on each date
-              let totalUnits = 0
+              // For each stock holding: compute how many index units you'd buy
+              // with the same ₹ amount on the same buy date
               const unitEvents: { date: string; units: number }[] = []
-
               for (const h of holdings) {
-                const buyDate   = h.buy_date || idxHistory[0].date
-                const amount    = h.quantity * h.avg_buy_price
-
-                // Find index price on or just after buy date
-                const buyIdx    = idxHistory.findIndex(p => p.date >= buyDate)
-                const idxPrice  = buyIdx >= 0 ? idxHistory[buyIdx].close : idxHistory[0].close
+                const buyDate  = h.buy_date || firstBuyDate
+                const amount   = h.quantity * h.avg_buy_price
+                // Find closest index date on or after buy date
+                const idx      = idxHistory.findIndex(p => p.date >= buyDate)
+                const idxPrice = idx >= 0 ? idxHistory[idx].close : idxHistory[0].close
                 if (!idxPrice || idxPrice <= 0) continue
-
-                const units = amount / idxPrice
-                totalUnits += units
-                unitEvents.push({ date: buyDate, units })
+                unitEvents.push({ date: buyDate, units: amount / idxPrice })
               }
+              if (!unitEvents.length) return
 
-              // Build daily ₹ value for the index simulation
-              // For each date in chart: value = sum(units bought up to that date) × current_index_price
-              // Only include dates from firstBuy onwards so the line starts where investment starts
-              const firstBuy = holdings
-                .map(h => h.buy_date || idxHistory[0].date)
-                .filter(Boolean)
-                .sort()[0] || idxHistory[0].date
-
+              // Build daily ₹ value: accumulated units × current index price
+              // Trim to dates >= firstBuyDate
               const result: HistPoint[] = idxHistory
-                .filter(p => p.date >= firstBuy)   // start from first purchase date
+                .filter(p => p.date >= firstBuyDate)
                 .map(p => {
-                  const applicableUnits = unitEvents
+                  const units = unitEvents
                     .filter(e => e.date <= p.date)
                     .reduce((s, e) => s + e.units, 0)
-                  if (applicableUnits <= 0) return null
-                  return { date: p.date, close: +(applicableUnits * p.close).toFixed(2) }
+                  if (units <= 0) return null
+                  return { date: p.date, close: +(units * p.close).toFixed(2) }
                 })
                 .filter((p): p is HistPoint => p !== null)
 
               newIdx[id] = result
+              console.log(`[kfin] index ${id}: ${result.length} pts from ${result[0]?.date}`)
             } catch (e) {
               console.warn(`[kfin] index history failed ${id}:`, e)
             }
@@ -369,11 +359,8 @@ export default function StockTracker() {
       )
       // If all buys happened before the chart window starts, show totalInvested as flat
       // (This is correct — all capital was deployed before the selected period)
-      const allBeforeWindow = buyEvents.every(e => e.date < portfolioHistory[0].date)
-
-      const effInv = allBeforeWindow
-        ? portfolioHistory.map(() => totalInvested)
-        : invLine
+      const allBeforeWindow = invLine.every(v => v === 0)
+      const effInv = allBeforeWindow ? portfolioHistory.map(() => totalInvested) : invLine
 
       return {
         labels: portfolioHistory.map(p => fmt(p.date)),
@@ -435,61 +422,65 @@ export default function StockTracker() {
     // Check if we have any index data at all
     const hasAnyIndex = benchmarkIndices.some(id => (indexHistories[id]?.length || 0) > 1)
 
-    // Find earliest date where we have BOTH portfolio AND at least one index
-    const hasIndex = benchmarkIndices.some(id => (indexHistories[id]?.length || 0) > 1)
     const firstBuy = [...holdings]
       .map(h => h.buy_date || '').filter(Boolean).sort()[0] || portfolioHistory[0].date
 
-    // Trim portfolioHistory to start from firstBuy
-    const portTrimmed = portfolioHistory.filter(p => p.date >= firstBuy)
-    if (!portTrimmed.length) return empty
+    // Use the index with most data points as the timeline backbone
+    // (since index fetches 'max', it has more data than portfolio's timeRange)
+    const primaryId  = benchmarkIndices.find(id => (indexHistories[id]?.length || 0) > 5)
+    const backbone   = primaryId ? indexHistories[primaryId] : portfolioHistory
+    const trimmed    = backbone.filter(p => p.date >= firstBuy)
+    if (!trimmed.length) return empty
 
-    const n   = portTrimmed.length
+    const n   = trimmed.length
     const fmt = n > 90
       ? (d: string) => new Date(d).toLocaleDateString('en-IN', { month:'short', year:'2-digit' })
       : (d: string) => new Date(d).toLocaleDateString('en-IN', { day:'2-digit', month:'short' })
 
-    const labels    = portTrimmed.map(p => fmt(p.date))
-    const portFirst = portTrimmed[0].close
-    const portLast  = portTrimmed[portTrimmed.length - 1].close
+    const labels = trimmed.map(p => fmt(p.date))
+
+    // Portfolio line — align to backbone dates using fill-forward
+    const portMap = new Map(portfolioHistory.map(p => [p.date, p.close]))
+    let lastPortVal = portfolioHistory[0]?.close || 0
+    const portAligned = trimmed.map(({ date }) => {
+      const v = portMap.get(date)
+      if (v !== undefined && v > 0) { lastPortVal = v }
+      return lastPortVal
+    })
+    const portFirst = portAligned[0] || 1
+    const portLast  = portAligned[portAligned.length - 1] || portFirst
     const myRet     = portFirst > 0 ? ((portLast - portFirst) / portFirst) * 100 : 0
 
-    // Build index datasets
+    // Index datasets — already in ₹ (accumulated units × price)
     const indexDatasets = benchmarkIndices
-      .filter(id => (indexHistories[id]?.length || 0) > 1)
+      .filter(id => (indexHistories[id]?.length || 0) > 5)
       .map(id => {
         const idx    = INDEX_TICKERS[id]
-        const idxPts = indexHistories[id]  // already trimmed from firstBuy in useEffect
+        const idxPts = indexHistories[id]
         const idxMap = new Map(idxPts.map(p => [p.date, p.close]))
 
-        // Align to portfolio trimmed dates with fill-forward
         const aligned: number[] = []
         let lastVal = idxPts[0]?.close || portFirst
-        for (const { date } of portTrimmed) {
+        for (const { date } of trimmed) {
           const v = idxMap.get(date)
           if (v !== undefined && v > 0) { lastVal = v; aligned.push(v) }
-          else { const base = idxPts[0]?.close || 1
-                 const scaled = (v / base) * totalInvested
-                 aligned.push(scaled) }
+          else aligned.push(lastVal)
         }
 
         return {
           label: idx.label,
           data:  aligned,
-          borderColor: idx.color,
-          backgroundColor: 'transparent',
+          borderColor: idx.color, backgroundColor: 'transparent',
           fill: false, tension: 0.4,
-          pointRadius: n > 60 ? 0 : 2,
-          borderWidth: 1.8,
+          pointRadius: n > 60 ? 0 : 2, borderWidth: 1.8,
         }
       })
 
-    // Return calculation
-    const primaryId  = benchmarkIndices.find(id => (indexHistories[id]?.length || 0) > 1)
-    const primPts    = primaryId ? indexHistories[primaryId] : []
-    const primFirst  = primPts[0]?.close || 1
-    const primLast   = primPts[primPts.length - 1]?.close || primFirst
-    const primRet    = primFirst > 0 ? ((primLast - primFirst) / primFirst) * 100 : 0
+    // Primary index return
+    const primPts   = primaryId ? indexHistories[primaryId] : []
+    const primFirst = primPts[0]?.close || 1
+    const primLast  = primPts[primPts.length - 1]?.close || primFirst
+    const primRet   = primFirst > 0 ? ((primLast - primFirst) / primFirst) * 100 : 0
 
     return {
       benchmarkData: {
@@ -497,12 +488,10 @@ export default function StockTracker() {
         datasets: [
           {
             label: 'My Portfolio (₹)',
-            data:  portTrimmed.map(p => p.close),
-            borderColor: '#8B5CF6',
-            backgroundColor: 'rgba(139,92,246,0.07)',
+            data:  portAligned,
+            borderColor: '#8B5CF6', backgroundColor: 'rgba(139,92,246,0.07)',
             fill: true, tension: 0.4,
-            pointRadius: n > 60 ? 0 : 2,
-            borderWidth: 2.5,
+            pointRadius: n > 60 ? 0 : 2, borderWidth: 2.5,
           },
           ...indexDatasets,
         ],
@@ -886,25 +875,25 @@ export default function StockTracker() {
                             </td>
                             <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}` }}>
                               <div style={{ fontSize: 12.5, fontWeight: 500, maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.company_name}</div>
-                              {h.quote && <div style={{ fontSize: 10.5, color: h.quote.change_pct >= 0 ? 'var(--pos)' : 'var(--neg)' }}>{h.quote.change_pct >= 0 ? '▲' : '▼'} {Math.abs(h.quote.change_pct).toFixed(2)}%</div>}
+                              {h.quote && h.quote.last_updated !== 'csv' && <div style={{ fontSize: 10.5, color: h.quote.change_pct >= 0 ? 'var(--pos)' : 'var(--neg)' }}>{h.quote.change_pct >= 0 ? '▲' : '▼'} {Math.abs(h.quote.change_pct).toFixed(2)}%</div>}
                             </td>
                             <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>{h.quantity}</td>
                             <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>{fi(h.avg_buy_price)}</td>
                             <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>
-                              {h.quote && h.quote.ltp > 0
+                              {h.quote && h.quote.last_updated !== 'csv' && h.quote.ltp > 0
                                 ? <span style={{ color: h.quote.change >= 0 ? 'var(--pos)' : 'var(--neg)' }}>{fi(h.quote.ltp)}</span>
                                 : <span style={{ color: 'var(--text-muted)', letterSpacing: '0.1em' }}>···</span>
                               }
                             </td>
                             <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>{fL(h.current_value)}</td>
                             <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right', fontFamily: 'var(--mono)', fontSize: 12.5 }}>
-                              {h.quote && h.quote.ltp > 0
+                              {h.quote && h.quote.last_updated !== 'csv' && h.quote.ltp > 0
                                 ? <span style={{ color: h.pnl >= 0 ? 'var(--pos)' : 'var(--neg)' }}>{h.pnl >= 0 ? '+' : ''}{fL(h.pnl)}</span>
                                 : <span style={{ color: 'var(--text-muted)' }}>···</span>
                               }
                             </td>
                             <td style={{ padding: '10px 12px', borderBottom: `1px solid ${bdC}`, textAlign: 'right' }}>
-                              {h.quote && h.quote.ltp > 0
+                              {h.quote && h.quote.last_updated !== 'csv' && h.quote.ltp > 0
                                 ? <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 99, background: h.pnl_pct >= 0 ? 'var(--pos-bg)' : 'var(--neg-bg)', color: h.pnl_pct >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
                                     {h.pnl_pct >= 0 ? '↑' : '↓'} {Math.abs(h.pnl_pct).toFixed(2)}%
                                   </span>
