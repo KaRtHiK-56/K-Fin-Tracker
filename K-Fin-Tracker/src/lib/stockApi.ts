@@ -158,7 +158,6 @@ export async function fetchLiveQuote(
 
     const d = (json.data ?? json) as Record<string, unknown>
     const q = parseYF(d, symbol, exchange)
-    let q = parseYF(d, symbol, exchange)
 
     // If quote parsing failed, fallback to last close price
     if (!q) {
