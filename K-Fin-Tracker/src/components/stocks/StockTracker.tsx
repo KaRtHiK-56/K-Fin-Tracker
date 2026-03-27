@@ -5,11 +5,10 @@ import {
   LineElement, Tooltip, Filler, ArcElement, Legend,
 } from 'chart.js'
 import {
-  fetchLiveQuote, buildStubQuote, computePortfolioPnL, computeHealthScore,
-  searchStocks, POPULAR_STOCKS, isMarketOpen,
-  fetchPortfolioHistory, fetchIndexHistory, fetchIndexInvestedValue, rebaseTo100,
-  clearQuoteCache, INDEX_TICKERS, INDEX_GROUPS, TIME_RANGES,
-  type HistPoint,
+  fetchLiveQuote,
+  computePortfolioPnL,
+  clearQuoteCache,
+  isMarketOpen
 } from '../../lib/stockApi'
 import type { StockHolding, StockWithQuote, LiveQuote, SortField, SortDir } from '../../types'
 import { useTheme } from '../../lib/ThemeContext'
