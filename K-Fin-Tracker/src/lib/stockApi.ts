@@ -1,4 +1,4 @@
-import type { StockHolding, LiveQuote, HealthScore } from '../types'
+import type { StockHolding, LiveQuote } from '../types'
 
 // ─── API ─────────────────────────────────────────
 const API = ''
