@@ -1,14 +1,38 @@
 import type { StockHolding, LiveQuote } from '../types'
 
-// ─── API ─────────────────────────────────────────
 const API = ''
+
+// ─── INDEX CONFIG ───────────────────────────────
+export const INDEX_TICKERS: Record<string, string> = {
+  NIFTY50: '^NSEI',
+  SENSEX: '^BSESN',
+  BANKNIFTY: '^NSEBANK',
+}
+
+export const INDEX_GROUPS = [
+  {
+    label: 'Main Indices',
+    options: [
+      { label: 'Nifty 50', value: 'NIFTY50' },
+      { label: 'Sensex', value: 'SENSEX' },
+      { label: 'Bank Nifty', value: 'BANKNIFTY' },
+    ]
+  }
+]
+
+export const TIME_RANGES = [
+  { label: '1M', value: '1mo' },
+  { label: '3M', value: '3mo' },
+  { label: '6M', value: '6mo' },
+  { label: '1Y', value: '1y' },
+  { label: 'Max', value: 'max' },
+]
 
 // ─── TYPES ───────────────────────────────────────
 export interface HistPoint {
   date: string
   close: number
 }
-
 // ─── MARKET HOURS ────────────────────────────────
 export function isMarketOpen(): boolean {
   const ist = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
