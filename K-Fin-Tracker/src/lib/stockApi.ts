@@ -61,6 +61,23 @@ function parseYF(d: Record<string, unknown>, symbol: string, exchange: 'NSE'|'BS
   }
 }
 
+ export function buildStubQuote(symbol: string, exchange: 'NSE' | 'BSE'): LiveQuote {
+  return {
+    symbol,
+    company_name: symbol,
+    exchange,
+    ltp: 0,
+    open: 0,
+    high: 0,
+    low: 0,
+    prev_close: 0,
+    change: 0,
+    change_pct: 0,
+    volume: 0,
+    last_updated: 'csv', // important flag
+  }
+}
+
 // ─── HISTORY ─────────────────────────────────────
 async function fetchHistory(ticker: string): Promise<HistPoint[]> {
   try {
