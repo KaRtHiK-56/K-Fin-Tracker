@@ -1,5 +1,9 @@
 import type { StockHolding, LiveQuote } from '../types'
 
+export function isMarketOpen(): boolean {
+  return true
+}
+
 // ─── API ─────────────────────────────────────────
 const API = ''
 
