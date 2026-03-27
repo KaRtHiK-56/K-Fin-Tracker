@@ -1,29 +1,30 @@
 import type { StockHolding, LiveQuote } from '../types'
 
-// ─── TYPES ─────────────────────────────
-export interface HistPoint {
-  date: string
-  close: number
-}
-
-// ─── CACHE ─────────────────────────────
-const quoteCache = new Map<string, { data: LiveQuote; ts: number }>()
-
-// ─── HELPERS ───────────────────────────
+// ───────── NORMALIZE (CRITICAL FIX)
 function normalize(symbol: string) {
   return symbol.toUpperCase().replace(/\s+/g, '')
 }
 
-function getPrice(obj: any): number {
-  const keys = ['regularMarketPrice', 'currentPrice', 'price', 'lastPrice']
-  for (const k of keys) {
-    const v = Number(obj[k])
-    if (isFinite(v) && v > 0) return v
-  }
-  return 0
+// ───────── CACHE
+const quoteCache = new Map<string, { data: LiveQuote; ts: number }>()
+
+// ───────── TATA FIX
+const SYMBOL_MAP: Record<string, string> = {
+  TATAMOTORS: 'TATAMOTORS.NS',
+  'TATAMOTORS-DVR': 'TATAMTRDVR.NS'
 }
 
-// ─── REQUIRED EXPORTS ──────────────────
+// ───────── GET PRICE
+function getPrice(d: any): number {
+  return Number(
+    d.regularMarketPrice ||
+    d.currentPrice ||
+    d.price ||
+    d.lastPrice
+  ) || 0
+}
+
+// ───────── REQUIRED EXPORTS (KEEP UI SAFE)
 export function isMarketOpen() {
   return true
 }
@@ -49,7 +50,7 @@ export function buildStubQuote(symbol: string, exchange: 'NSE'|'BSE'): LiveQuote
   }
 }
 
-// ─── LIVE QUOTE ────────────────────────
+// ───────── FETCH QUOTE (FINAL FIX)
 export async function fetchLiveQuote(
   symbol: string,
   exchange: 'NSE' | 'BSE' = 'NSE'
@@ -57,16 +58,11 @@ export async function fetchLiveQuote(
 
   const clean = normalize(symbol)
 
-  const symbolMap: Record<string,string> = {
-    TATAMOTORS: 'TATAMOTORS.NS',
-    'TATAMOTORS-DVR': 'TATAMTRDVR.NS'
-  }
-
   const ticker =
-    symbolMap[clean] ||
+    SYMBOL_MAP[clean] ||
     (exchange === 'BSE' ? `${clean}.BO` : `${clean}.NS`)
 
-  const cached = quoteCache.get(ticker)
+  const cached = quoteCache.get(clean)
   if (cached && Date.now() - cached.ts < 60000) {
     return cached.data
   }
@@ -78,11 +74,11 @@ export async function fetchLiveQuote(
     const data = json.data ?? json
     const price = getPrice(data)
 
-    if (!price) return cached?.data ?? null
+    if (!price || price <= 0) return cached?.data ?? null
 
     const quote: LiveQuote = {
       symbol: clean,
-      company_name: String(data.longName || clean),
+      company_name: data.longName || clean,
       exchange,
       ltp: price,
       open: price,
@@ -95,7 +91,7 @@ export async function fetchLiveQuote(
       last_updated: new Date().toISOString()
     }
 
-    quoteCache.set(ticker, { data: quote, ts: Date.now() })
+    quoteCache.set(clean, { data: quote, ts: Date.now() })
 
     return quote
   } catch {
@@ -103,52 +99,52 @@ export async function fetchLiveQuote(
   }
 }
 
-// ─── MULTI FETCH ───────────────────────
+// ───────── MULTI FETCH (KEY FIX)
 export async function fetchMultipleQuotes(
-  holdings: { symbol: string; exchange: 'NSE'|'BSE' }[]
+  holdings: { symbol: string; exchange: 'NSE' | 'BSE' }[]
 ) {
   const map = new Map<string, LiveQuote>()
 
-  await Promise.allSettled(
-    holdings.map(h =>
-      fetchLiveQuote(h.symbol, h.exchange).then(q => {
-        if (!q) return
-        const key = normalize(h.symbol)
-        map.set(key, q)
-      })
-    )
+  await Promise.all(
+    holdings.map(async (h) => {
+      const q = await fetchLiveQuote(h.symbol, h.exchange)
+      if (!q) return
+
+      const key = normalize(h.symbol)
+      map.set(key, q)
+    })
   )
 
   return map
 }
 
-// ─── PNL (FIXED) ───────────────────────
+// ───────── PNL (KEY FIX)
 export function computePortfolioPnL(
   holdings: StockHolding[],
   quotes: Map<string, LiveQuote>
 ) {
-  let totalInvested = 0
-  let currentValue = 0
+  let invested = 0
+  let current = 0
 
   holdings.forEach(h => {
-    const invested = h.quantity * h.avg_buy_price
-    totalInvested += invested
+    const inv = h.quantity * h.avg_buy_price
+    invested += inv
 
     const key = normalize(h.symbol)
     const q = quotes.get(key)
 
     if (!q || !q.ltp || q.ltp <= 0) return
 
-    currentValue += h.quantity * q.ltp
+    current += h.quantity * q.ltp
   })
 
+  const pnl = current - invested
+
   return {
-    totalInvested,
-    currentValue,
-    totalPnL: currentValue - totalInvested,
-    totalPnLPct: totalInvested
-      ? ((currentValue - totalInvested) / totalInvested) * 100
-      : 0,
+    totalInvested: invested,
+    currentValue: current,
+    totalPnL: pnl,
+    totalPnLPct: invested ? (pnl / invested) * 100 : 0,
     dayPnL: 0,
     dayPnLPct: 0
   }
