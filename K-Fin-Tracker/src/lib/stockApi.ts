@@ -2,17 +2,8 @@ import {
   fetchLiveQuote,
   fetchMultipleQuotes,
   computePortfolioPnL,
-  computeHealthScore,
   clearQuoteCache,
-  isMarketOpen,
-  buildStubQuote,
-  INDEX_TICKERS,
-  INDEX_GROUPS,
-  TIME_RANGES,
-  fetchPortfolioHistory,
-  fetchIndexHistory,
-  fetchIndexInvestedValue,
-  rebaseTo100
+  isMarketOpen
 } from '../../lib/stockApi'
 
 // ───────── TYPES ─────────
@@ -168,38 +159,6 @@ export function computePortfolioPnL(
     totalPnLPct: invested ? (pnl / invested) * 100 : 0,
     dayPnL: 0,
     dayPnLPct: 0
-  }
-}
-
-// ───────── HEALTH SCORE (FIXED) ─────────
-export function computeHealthScore(
-  holdings: StockHolding[],
-  pnl: any
-) {
-  if (!holdings || holdings.length === 0) {
-    return {
-      score: 0,
-      diversification: 0,
-      performance: 0,
-      risk: 0
-    }
-  }
-
-  const diversification = Math.min(100, holdings.length * 10)
-  const performance = Math.max(0, Math.min(100, pnl?.totalPnLPct || 0))
-  const risk = 100 - diversification
-
-  const score = Math.round(
-    diversification * 0.4 +
-    performance * 0.4 +
-    risk * 0.2
-  )
-
-  return {
-    score,
-    diversification,
-    performance,
-    risk
   }
 }
 
