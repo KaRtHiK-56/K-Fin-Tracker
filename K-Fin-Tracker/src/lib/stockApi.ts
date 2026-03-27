@@ -126,7 +126,7 @@ export function buildStubQuote(
     ltp: avgBuyPrice, open: avgBuyPrice, high: avgBuyPrice,
     low: avgBuyPrice, prev_close: avgBuyPrice,
     change: 0, change_pct: 0, volume: 0,
-    last_updated: 'csv',
+    last_updated: 'csv',  // ← CRITICAL FLAG — marks this as stub data
   }
 }
 
@@ -141,8 +141,9 @@ export async function fetchLiveQuote(
     return hit.data
   }
 
-  // Normalize symbol (fix spaces like "Tata Motors")
-  const cleanSymbol = symbol.toUpperCase().replace(/\s+/g, '')
+  // FIX #2: Do NOT normalize symbol — preserve exact spacing
+  // "TATA MOTORS" must stay "TATA MOTORS", not "TATAMOTORS"
+  const cleanSymbol = symbol.toUpperCase().trim()
 
   const ticker =
     exchange === 'BSE'
@@ -157,7 +158,7 @@ export async function fetchLiveQuote(
     if (json.error === 'price_unavailable') return hit?.data ?? null
 
     const d = (json.data ?? json) as Record<string, unknown>
-    const q = parseYF(d, symbol, exchange)
+    let q = parseYF(d, symbol, exchange)
 
     // If quote parsing failed, fallback to last close price
     if (!q) {
@@ -179,7 +180,7 @@ export async function fetchLiveQuote(
           volume: 0,
           last_updated: new Date().toISOString(),
         }
-     }  else {
+      } else {
         throw new Error('No fallback price available')
       }
     }
@@ -232,6 +233,7 @@ async function fetchHistory(ticker: string, period: string, interval: string): P
 }
 
 export function fetchStockHistory(symbol: string, period: string, interval: string): Promise<HistPoint[]> {
+  // FIX #2: Preserve exact symbol for Tata Motors
   return fetchHistory(`${symbol}.NS`, period, interval)
 }
 
@@ -263,42 +265,14 @@ export async function fetchPortfolioHistory(
   }).filter(p => p.close > 0)
 }
 
-// ─── "WHAT IF NIFTY" — invested same ₹ on same date ─────────────────────────
-// Given: user invested totalInvested on startDate
-// Returns: daily ₹ value if that same money was in this index
-export async function fetchIndexInvestedValue(
-  indexId: string,
-  totalInvested: number,
-  startDate: string,
-  period: string,
-  interval: string
-): Promise<HistPoint[]> {
-  const idx = INDEX_TICKERS[indexId]
-  if (!idx || totalInvested <= 0) return []
-
-  const raw = await fetchHistory(idx.yahoo, period, interval)
-  if (!raw.length) return []
-
-  // Find index level on or just after the startDate
-  const startI = raw.findIndex(p => p.date >= startDate)
-  if (startI < 0) return []
-
-  const baseLevel = raw[startI].close
-  if (!baseLevel || baseLevel <= 0) return []
-
-  // Units bought = totalInvested / index_level_on_startDate
-  const units = totalInvested / baseLevel
-
-  return raw.slice(startI).map(p => ({
-    date:  p.date,
-    close: +(p.close * units).toFixed(2),
-  }))
-}
-
-export async function fetchIndexHistory(indexId: string, period: string, interval: string): Promise<HistPoint[]> {
+// ─── FIX #4: Always fetch index history with 'max' range ─────────────────────
+// This ensures we have index data covering ALL user buy dates, regardless of
+// the UI's selected time range (1M, 1Y, etc.)
+export async function fetchIndexHistory(indexId: string): Promise<HistPoint[]> {
   const idx = INDEX_TICKERS[indexId]
   if (!idx) return []
-  return fetchHistory(idx.yahoo, period, interval)
+  // ALWAYS fetch max range for index — we'll trim in the UI based on user's first buy date
+  return fetchHistory(idx.yahoo, 'max', '1wk')
 }
 
 // ─── Rebase array so first value = 100 ───────────────────────────────────────
@@ -337,17 +311,20 @@ export function clearQuoteCache() {
   console.log('[kfin] quote cache cleared — next fetch will get fresh prices')
 }
 
-// ─── Portfolio P&L ────────────────────────────────────────────────────────────
+// ─── FIX #1: Portfolio P&L — STRICT stub quote guards ─────────────────────────
+// Only count quotes with last_updated !== 'csv' as live prices
 export function computePortfolioPnL(holdings: StockHolding[], quotes: Map<string, LiveQuote>) {
   let totalInvested = 0, currentValue = 0, dayPnL = 0
   const marketOpen = isMarketOpen()
+  
   holdings.forEach(h => {
     const inv = h.quantity * h.avg_buy_price
     totalInvested += inv
+    
     const q = quotes.get(h.symbol)
-    // Only use LIVE quotes (last_updated !== 'csv') for current value calculation
-    // Stub/CSV quotes exist only to show avg_buy_price in the table — not for P&L
+    // FIX #1: ONLY use quotes that are NOT stub data (last_updated !== 'csv')
     const isLive = q && q.last_updated !== 'csv' && isFinite(q.ltp) && q.ltp > 0
+    
     if (isLive && q) {
       currentValue += h.quantity * q.ltp
       if (marketOpen && isFinite(q.change)) dayPnL += h.quantity * q.change
@@ -356,9 +333,11 @@ export function computePortfolioPnL(holdings: StockHolding[], quotes: Map<string
       currentValue += inv
     }
   })
+  
   const totalPnL    = currentValue - totalInvested
   const totalPnLPct = totalInvested > 0 ? (totalPnL / totalInvested) * 100 : 0
   const dayPnLPct   = (currentValue - dayPnL) > 0 ? (dayPnL / (currentValue - dayPnL)) * 100 : 0
+  
   return { totalInvested, currentValue, totalPnL, totalPnLPct, dayPnL, dayPnLPct }
 }
 
@@ -368,12 +347,16 @@ export function computeHealthScore(holdings: StockHolding[], quotes: Map<string,
   const sectors  = new Set(holdings.map(h => h.sector || 'Other'))
   const vals     = holdings.map(h => {
     const q = quotes.get(h.symbol)
+    // FIX #1: Only use live quotes for health calculation
     const ltp = (q && q.last_updated !== 'csv') ? q.ltp : h.avg_buy_price
     return h.quantity * ltp
   })
   const totalVal = vals.reduce((s, v) => s + v, 0)
   const topPct   = totalVal > 0 ? (Math.max(...vals) / totalVal) * 100 : 0
-  const winners  = holdings.filter(h => (quotes.get(h.symbol)?.change_pct ?? 0) >= 0).length
+  const winners  = holdings.filter(h => {
+    const q = quotes.get(h.symbol)
+    return q && q.last_updated !== 'csv' && q.change_pct >= 0
+  }).length
   const overall  = Math.min(100, Math.round(
     Math.min(sectors.size * 12, 40) + Math.max(30 - topPct * 0.5, 0) +
     Math.min(holdings.length * 2, 20) +
