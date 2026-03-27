@@ -1,36 +1,42 @@
 import type { StockHolding, LiveQuote } from '../types'
 
-// ─── TYPES ───────────────────────────────────────
+// ───────────────────────────────────────────────
+// TYPES
+// ───────────────────────────────────────────────
 export interface HistPoint {
   date: string
   close: number
 }
 
-// ─── CACHE ───────────────────────────────────────
+// ───────────────────────────────────────────────
+// CACHE
+// ───────────────────────────────────────────────
 const quoteCache = new Map<string, { data: LiveQuote; ts: number }>()
 
-// ─── BASIC HELPERS ───────────────────────────────
-function getValidNumber(...vals: any[]): number {
-  for (const v of vals) {
-    const n = Number(v)
-    if (isFinite(n) && n > 0) return n
+// ───────────────────────────────────────────────
+// BASIC UTILS
+// ───────────────────────────────────────────────
+function getValidPrice(obj: any): number {
+  const keys = ['regularMarketPrice', 'currentPrice', 'price', 'lastPrice']
+  for (const k of keys) {
+    const v = Number(obj[k])
+    if (isFinite(v) && v > 0) return v
   }
   return 0
 }
 
-// ─── REQUIRED EXPORTS (ALL USED BY UI) ───────────
+// ───────────────────────────────────────────────
+// REQUIRED EXPORTS
+// ───────────────────────────────────────────────
 
-// 🔹 MARKET STATUS
 export function isMarketOpen(): boolean {
   return true
 }
 
-// 🔹 CLEAR CACHE
 export function clearQuoteCache() {
   quoteCache.clear()
 }
 
-// 🔹 STUB QUOTE (CSV LOAD)
 export function buildStubQuote(symbol: string, exchange: 'NSE' | 'BSE'): LiveQuote {
   return {
     symbol,
@@ -48,7 +54,9 @@ export function buildStubQuote(symbol: string, exchange: 'NSE' | 'BSE'): LiveQuo
   }
 }
 
-// 🔹 INDEX CONFIG (for UI)
+// ───────────────────────────────────────────────
+// INDEX CONFIG
+// ───────────────────────────────────────────────
 export const INDEX_TICKERS = {
   NIFTY50: '^NSEI',
   SENSEX: '^BSESN',
@@ -74,7 +82,9 @@ export const TIME_RANGES = [
   { label: 'Max', value: 'max' },
 ]
 
-// 🔹 LIVE QUOTE
+// ───────────────────────────────────────────────
+// LIVE QUOTE (FIXED)
+// ───────────────────────────────────────────────
 export async function fetchLiveQuote(
   symbol: string,
   exchange: 'NSE' | 'BSE' = 'NSE'
@@ -82,7 +92,6 @@ export async function fetchLiveQuote(
 
   const clean = symbol.toUpperCase().replace(/\s+/g, '')
 
-  // FIXED symbol mapping (Tata Motors issue)
   const symbolMap: Record<string, string> = {
     TATAMOTORS: 'TATAMOTORS.NS',
     'TATAMOTORS-DVR': 'TATAMTRDVR.NS',
@@ -92,7 +101,7 @@ export async function fetchLiveQuote(
     symbolMap[clean] ||
     (exchange === 'BSE' ? `${clean}.BO` : `${clean}.NS`)
 
-  const cacheKey = `${ticker}`
+  const cacheKey = ticker
   const cached = quoteCache.get(cacheKey)
 
   if (cached && Date.now() - cached.ts < 60000) {
@@ -103,26 +112,20 @@ export async function fetchLiveQuote(
     const res = await fetch(`/api/quote?symbol=${encodeURIComponent(ticker)}`)
     const json = await res.json()
 
-    const d = (json.data ?? json) as Record<string, unknown>
+    const data = json.data ?? json
+    const price = getValidPrice(data)
 
-    const ltp = getValidNumber(
-      d.regularMarketPrice,
-      d.currentPrice,
-      d.price,
-      d.lastPrice
-    )
-
-    if (!ltp) return cached?.data ?? null
+    if (!price) return cached?.data ?? null
 
     const quote: LiveQuote = {
       symbol: clean,
-      company_name: String(d.longName || clean),
+      company_name: String(data.longName || clean),
       exchange,
-      ltp,
-      open: ltp,
-      high: ltp,
-      low: ltp,
-      prev_close: ltp,
+      ltp: price,
+      open: price,
+      high: price,
+      low: price,
+      prev_close: price,
       change: 0,
       change_pct: 0,
       volume: 0,
@@ -137,7 +140,9 @@ export async function fetchLiveQuote(
   }
 }
 
-// 🔹 MULTI FETCH
+// ───────────────────────────────────────────────
+// MULTI FETCH
+// ───────────────────────────────────────────────
 export async function fetchMultipleQuotes(
   holdings: { symbol: string; exchange: 'NSE' | 'BSE' }[]
 ): Promise<Map<string, LiveQuote>> {
@@ -155,7 +160,9 @@ export async function fetchMultipleQuotes(
   return result
 }
 
-// 🔹 PORTFOLIO PNL (CORRECTED)
+// ───────────────────────────────────────────────
+// PORTFOLIO PNL (FIXED)
+// ───────────────────────────────────────────────
 export function computePortfolioPnL(
   holdings: StockHolding[],
   quotes: Map<string, LiveQuote>
@@ -169,9 +176,7 @@ export function computePortfolioPnL(
 
     const q = quotes.get(h.symbol)
 
-    if (!q || !isFinite(q.ltp) || q.ltp <= 0) {
-      return // skip invalid
-    }
+    if (!q || !isFinite(q.ltp) || q.ltp <= 0) return
 
     currentValue += h.quantity * q.ltp
   })
@@ -182,14 +187,15 @@ export function computePortfolioPnL(
     totalInvested,
     currentValue,
     totalPnL,
-    totalPnLPct:
-      totalInvested > 0 ? (totalPnL / totalInvested) * 100 : 0,
+    totalPnLPct: totalInvested > 0 ? (totalPnL / totalInvested) * 100 : 0,
     dayPnL: 0,
     dayPnLPct: 0,
   }
 }
 
-// 🔹 SAFE DUMMIES (to avoid crashes)
+// ───────────────────────────────────────────────
+// SAFE FALLBACKS (NO CRASH)
+// ───────────────────────────────────────────────
 export function searchStocks() { return [] }
 export const POPULAR_STOCKS: any[] = []
 
