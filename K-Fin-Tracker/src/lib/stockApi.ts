@@ -1,14 +1,15 @@
 import type { StockHolding, LiveQuote, HealthScore } from '../types'
 
-// API base
+// ─── API ─────────────────────────────────────────
 const API = ''
 
+// ─── TYPES ───────────────────────────────────────
 export interface HistPoint {
   date: string
   close: number
 }
 
-// ─── Market hours ─────────────────────────────────
+// ─── MARKET HOURS ────────────────────────────────
 export function isMarketOpen(): boolean {
   const ist = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
   const mins = ist.getHours() * 60 + ist.getMinutes()
@@ -16,11 +17,17 @@ export function isMarketOpen(): boolean {
   return day >= 1 && day <= 5 && mins >= 555 && mins <= 930
 }
 
-// ─── Cache ────────────────────────────────────────
+// ─── CACHE ───────────────────────────────────────
 const quoteCache = new Map<string, { data: LiveQuote; ts: number }>()
 const QUOTE_TTL = () => isMarketOpen() ? 60000 : 4 * 3600_000
 
-// ─── Helper ───────────────────────────────────────
+// ✅ FIX: restore cache clear (build error fix)
+export function clearQuoteCache() {
+  quoteCache.clear()
+  console.log('[kfin] quote cache cleared')
+}
+
+// ─── HELPERS ─────────────────────────────────────
 function dig(obj: Record<string, unknown>, ...keys: string[]): number {
   for (const k of keys) {
     const v = Number(obj[k])
@@ -29,7 +36,7 @@ function dig(obj: Record<string, unknown>, ...keys: string[]): number {
   return 0
 }
 
-// ─── Parse Yahoo Data ─────────────────────────────
+// ─── PARSER ──────────────────────────────────────
 function parseYF(d: Record<string, unknown>, symbol: string, exchange: 'NSE'|'BSE'): LiveQuote | null {
   const ltp = dig(d, 'regularMarketPrice', 'currentPrice', 'price', 'lastPrice')
   if (!ltp) return null
@@ -54,7 +61,7 @@ function parseYF(d: Record<string, unknown>, symbol: string, exchange: 'NSE'|'BS
   }
 }
 
-// ─── HISTORY FETCH ────────────────────────────────
+// ─── HISTORY ─────────────────────────────────────
 async function fetchHistory(ticker: string): Promise<HistPoint[]> {
   try {
     const res = await fetch(`/api/history?symbol=${ticker}&range=1mo&interval=1d`)
@@ -65,7 +72,7 @@ async function fetchHistory(ticker: string): Promise<HistPoint[]> {
   }
 }
 
-// ─── FIXED LIVE QUOTE ─────────────────────────────
+// ─── LIVE QUOTE (FULL FIXED) ─────────────────────
 export async function fetchLiveQuote(
   symbol: string,
   exchange: 'NSE' | 'BSE' = 'NSE'
@@ -91,7 +98,7 @@ export async function fetchLiveQuote(
 
     const json = await res.json()
 
-    // ✅ FIX: handle price_unavailable
+    // ✅ FIX: handle price unavailable
     if (json.error === 'price_unavailable') {
       const hist = await fetchHistory(ticker)
       const last = hist.at(-1)?.close
@@ -122,7 +129,7 @@ export async function fetchLiveQuote(
 
     let q = parseYF(d, cleanSymbol, exchange)
 
-    // ✅ FIX: fallback if 0 price
+    // ✅ FIX: fallback if 0
     if (!q || q.ltp === 0) {
       const hist = await fetchHistory(ticker)
       const last = hist.at(-1)?.close
@@ -149,12 +156,13 @@ export async function fetchLiveQuote(
 
     return q
 
-  } catch {
+  } catch (e) {
+    console.warn(`[kfin] ✗ ${cleanSymbol}:`, e)
     return hit?.data ?? null
   }
 }
 
-// ─── MULTI QUOTES ────────────────────────────────
+// ─── MULTI FETCH ─────────────────────────────────
 export async function fetchMultipleQuotes(
   holdings: { symbol: string; exchange: 'NSE' | 'BSE' }[]
 ): Promise<Map<string, LiveQuote>> {
@@ -172,7 +180,7 @@ export async function fetchMultipleQuotes(
   return result
 }
 
-// ─── FIXED PNL ───────────────────────────────────
+// ─── PNL (FULL FIXED) ────────────────────────────
 export function computePortfolioPnL(
   holdings: StockHolding[],
   quotes: Map<string, LiveQuote>
@@ -189,7 +197,7 @@ export function computePortfolioPnL(
 
     const q = quotes.get(h.symbol)
 
-    // ✅ FIX: accept ANY valid quote
+    // ✅ FIX: accept any valid quote
     const hasQuote = q && isFinite(q.ltp) && q.ltp > 0
 
     if (hasQuote && q) {
