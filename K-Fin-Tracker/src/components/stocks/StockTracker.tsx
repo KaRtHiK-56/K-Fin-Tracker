@@ -284,7 +284,6 @@ export default function StockTracker() {
 
   const enriched = holdings.map(enrich)
   const pnl      = computePortfolioPnL(holdings, quotes)
-  const health   = computeHealthScore(holdings, quotes)
   const hasData  = holdings.length > 0
 
   // ── Sync live P&L snapshot to global store → Dashboard reads this ──────────
