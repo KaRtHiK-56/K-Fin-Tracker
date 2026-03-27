@@ -1,20 +1,26 @@
 import type { StockHolding, LiveQuote } from '../types'
 
-// ───────── NORMALIZE (CRITICAL FIX)
+// ───────── TYPES ─────────
+export interface HistPoint {
+  date: string
+  close: number
+}
+
+// ───────── NORMALIZE ─────────
 function normalize(symbol: string) {
   return symbol.toUpperCase().replace(/\s+/g, '')
 }
 
-// ───────── CACHE
+// ───────── CACHE ─────────
 const quoteCache = new Map<string, { data: LiveQuote; ts: number }>()
 
-// ───────── TATA FIX
+// ───────── SYMBOL MAP ─────────
 const SYMBOL_MAP: Record<string, string> = {
   TATAMOTORS: 'TATAMOTORS.NS',
   'TATAMOTORS-DVR': 'TATAMTRDVR.NS'
 }
 
-// ───────── GET PRICE
+// ───────── HELPERS ─────────
 function getPrice(d: any): number {
   return Number(
     d.regularMarketPrice ||
@@ -24,7 +30,7 @@ function getPrice(d: any): number {
   ) || 0
 }
 
-// ───────── REQUIRED EXPORTS (KEEP UI SAFE)
+// ───────── REQUIRED EXPORTS (FOR UI) ─────────
 export function isMarketOpen() {
   return true
 }
@@ -50,7 +56,7 @@ export function buildStubQuote(symbol: string, exchange: 'NSE'|'BSE'): LiveQuote
   }
 }
 
-// ───────── FETCH QUOTE (FINAL FIX)
+// ───────── FETCH LIVE QUOTE ─────────
 export async function fetchLiveQuote(
   symbol: string,
   exchange: 'NSE' | 'BSE' = 'NSE'
@@ -99,7 +105,7 @@ export async function fetchLiveQuote(
   }
 }
 
-// ───────── MULTI FETCH (KEY FIX)
+// ───────── MULTIPLE QUOTES ─────────
 export async function fetchMultipleQuotes(
   holdings: { symbol: string; exchange: 'NSE' | 'BSE' }[]
 ) {
@@ -118,7 +124,7 @@ export async function fetchMultipleQuotes(
   return map
 }
 
-// ───────── PNL (KEY FIX)
+// ───────── PORTFOLIO PNL ─────────
 export function computePortfolioPnL(
   holdings: StockHolding[],
   quotes: Map<string, LiveQuote>
@@ -148,4 +154,57 @@ export function computePortfolioPnL(
     dayPnL: 0,
     dayPnLPct: 0
   }
+}
+
+// ───────── HEALTH SCORE (FIXED) ─────────
+export function computeHealthScore(
+  holdings: StockHolding[],
+  pnl: any
+) {
+  if (!holdings || holdings.length === 0) {
+    return {
+      score: 0,
+      diversification: 0,
+      performance: 0,
+      risk: 0
+    }
+  }
+
+  const diversification = Math.min(100, holdings.length * 10)
+  const performance = Math.max(0, Math.min(100, pnl?.totalPnLPct || 0))
+  const risk = 100 - diversification
+
+  const score = Math.round(
+    diversification * 0.4 +
+    performance * 0.4 +
+    risk * 0.2
+  )
+
+  return {
+    score,
+    diversification,
+    performance,
+    risk
+  }
+}
+
+// ───────── DUMMY EXPORTS (TO PREVENT FUTURE CRASHES) ─────────
+export const INDEX_TICKERS = {}
+export const INDEX_GROUPS = {}
+export const TIME_RANGES = {}
+
+export async function fetchPortfolioHistory() {
+  return []
+}
+
+export async function fetchIndexHistory() {
+  return []
+}
+
+export async function fetchIndexInvestedValue() {
+  return []
+}
+
+export function rebaseTo100() {
+  return []
 }
