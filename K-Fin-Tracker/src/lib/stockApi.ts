@@ -1,38 +1,5 @@
 import type { StockHolding, LiveQuote } from '../types'
 
-export function isMarketOpen(): boolean {
-  return true
-}
-
-// ─── API ─────────────────────────────────────────
-const API = ''
-
-// ─── INDEX CONFIG ───────────────────────────────
-export const INDEX_TICKERS: Record<string, string> = {
-  NIFTY50: '^NSEI',
-  SENSEX: '^BSESN',
-  BANKNIFTY: '^NSEBANK',
-}
-
-export const INDEX_GROUPS = [
-  {
-    label: 'Main Indices',
-    options: [
-      { label: 'Nifty 50', value: 'NIFTY50' },
-      { label: 'Sensex', value: 'SENSEX' },
-      { label: 'Bank Nifty', value: 'BANKNIFTY' },
-    ]
-  }
-]
-
-export const TIME_RANGES = [
-  { label: '1M', value: '1mo' },
-  { label: '3M', value: '3mo' },
-  { label: '6M', value: '6mo' },
-  { label: '1Y', value: '1y' },
-  { label: 'Max', value: 'max' },
-]
-
 // ─── TYPES ───────────────────────────────────────
 export interface HistPoint {
   date: string
@@ -42,20 +9,28 @@ export interface HistPoint {
 // ─── CACHE ───────────────────────────────────────
 const quoteCache = new Map<string, { data: LiveQuote; ts: number }>()
 
-export function clearQuoteCache() {
-  quoteCache.clear()
-}
-
-// ─── HELPERS ─────────────────────────────────────
-function dig(obj: Record<string, unknown>, ...keys: string[]): number {
-  for (const k of keys) {
-    const v = Number(obj[k])
-    if (isFinite(v) && v > 0) return v
+// ─── BASIC HELPERS ───────────────────────────────
+function getValidNumber(...vals: any[]): number {
+  for (const v of vals) {
+    const n = Number(v)
+    if (isFinite(n) && n > 0) return n
   }
   return 0
 }
 
-// ─── STUB QUOTE (CSV fallback) ───────────────────
+// ─── REQUIRED EXPORTS (ALL USED BY UI) ───────────
+
+// 🔹 MARKET STATUS
+export function isMarketOpen(): boolean {
+  return true
+}
+
+// 🔹 CLEAR CACHE
+export function clearQuoteCache() {
+  quoteCache.clear()
+}
+
+// 🔹 STUB QUOTE (CSV LOAD)
 export function buildStubQuote(symbol: string, exchange: 'NSE' | 'BSE'): LiveQuote {
   return {
     symbol,
@@ -73,14 +48,56 @@ export function buildStubQuote(symbol: string, exchange: 'NSE' | 'BSE'): LiveQuo
   }
 }
 
-// ─── LIVE QUOTE ──────────────────────────────────
+// 🔹 INDEX CONFIG (for UI)
+export const INDEX_TICKERS = {
+  NIFTY50: '^NSEI',
+  SENSEX: '^BSESN',
+  BANKNIFTY: '^NSEBANK',
+}
+
+export const INDEX_GROUPS = [
+  {
+    label: 'Main Indices',
+    options: [
+      { label: 'Nifty 50', value: 'NIFTY50' },
+      { label: 'Sensex', value: 'SENSEX' },
+      { label: 'Bank Nifty', value: 'BANKNIFTY' },
+    ],
+  },
+]
+
+export const TIME_RANGES = [
+  { label: '1M', value: '1mo' },
+  { label: '3M', value: '3mo' },
+  { label: '6M', value: '6mo' },
+  { label: '1Y', value: '1y' },
+  { label: 'Max', value: 'max' },
+]
+
+// 🔹 LIVE QUOTE
 export async function fetchLiveQuote(
   symbol: string,
   exchange: 'NSE' | 'BSE' = 'NSE'
 ): Promise<LiveQuote | null> {
 
   const clean = symbol.toUpperCase().replace(/\s+/g, '')
-  const ticker = exchange === 'BSE' ? `${clean}.BO` : `${clean}.NS`
+
+  // FIXED symbol mapping (Tata Motors issue)
+  const symbolMap: Record<string, string> = {
+    TATAMOTORS: 'TATAMOTORS.NS',
+    'TATAMOTORS-DVR': 'TATAMTRDVR.NS',
+  }
+
+  const ticker =
+    symbolMap[clean] ||
+    (exchange === 'BSE' ? `${clean}.BO` : `${clean}.NS`)
+
+  const cacheKey = `${ticker}`
+  const cached = quoteCache.get(cacheKey)
+
+  if (cached && Date.now() - cached.ts < 60000) {
+    return cached.data
+  }
 
   try {
     const res = await fetch(`/api/quote?symbol=${encodeURIComponent(ticker)}`)
@@ -88,10 +105,16 @@ export async function fetchLiveQuote(
 
     const d = (json.data ?? json) as Record<string, unknown>
 
-    const ltp = dig(d, 'regularMarketPrice', 'currentPrice', 'price')
-    if (!ltp) return null
+    const ltp = getValidNumber(
+      d.regularMarketPrice,
+      d.currentPrice,
+      d.price,
+      d.lastPrice
+    )
 
-    return {
+    if (!ltp) return cached?.data ?? null
+
+    const quote: LiveQuote = {
       symbol: clean,
       company_name: String(d.longName || clean),
       exchange,
@@ -106,12 +129,15 @@ export async function fetchLiveQuote(
       last_updated: new Date().toISOString(),
     }
 
+    quoteCache.set(cacheKey, { data: quote, ts: Date.now() })
+
+    return quote
   } catch {
-    return null
+    return cached?.data ?? null
   }
 }
 
-// ─── MULTI FETCH ─────────────────────────────────
+// 🔹 MULTI FETCH
 export async function fetchMultipleQuotes(
   holdings: { symbol: string; exchange: 'NSE' | 'BSE' }[]
 ): Promise<Map<string, LiveQuote>> {
@@ -129,7 +155,7 @@ export async function fetchMultipleQuotes(
   return result
 }
 
-// ─── PNL ─────────────────────────────────────────
+// 🔹 PORTFOLIO PNL (CORRECTED)
 export function computePortfolioPnL(
   holdings: StockHolding[],
   quotes: Map<string, LiveQuote>
@@ -138,30 +164,34 @@ export function computePortfolioPnL(
   let currentValue = 0
 
   holdings.forEach(h => {
-    const inv = h.quantity * h.avg_buy_price
-    totalInvested += inv
+    const invested = h.quantity * h.avg_buy_price
+    totalInvested += invested
 
     const q = quotes.get(h.symbol)
 
-    if (q && q.ltp > 0) {
-      currentValue += h.quantity * q.ltp
-    } else {
-      currentValue += inv
+    if (!q || !isFinite(q.ltp) || q.ltp <= 0) {
+      return // skip invalid
     }
+
+    currentValue += h.quantity * q.ltp
   })
+
+  const totalPnL = currentValue - totalInvested
 
   return {
     totalInvested,
     currentValue,
-    totalPnL: currentValue - totalInvested,
-    totalPnLPct: totalInvested > 0 ? ((currentValue - totalInvested) / totalInvested) * 100 : 0,
+    totalPnL,
+    totalPnLPct:
+      totalInvested > 0 ? (totalPnL / totalInvested) * 100 : 0,
     dayPnL: 0,
     dayPnLPct: 0,
   }
 }
 
-// ─── DUMMY FUNCTIONS (TO PREVENT BUILD ERRORS) ───
-// You can improve later — these stop crashes now
+// 🔹 SAFE DUMMIES (to avoid crashes)
+export function searchStocks() { return [] }
+export const POPULAR_STOCKS: any[] = []
 
 export async function fetchPortfolioHistory(): Promise<HistPoint[]> {
   return []
@@ -181,10 +211,6 @@ export function rebaseTo100(data: HistPoint[]): HistPoint[] {
   return data.map(d => ({ ...d, close: (d.close / base) * 100 }))
 }
 
-// dummy search + popular
-export function searchStocks() { return [] }
-export const POPULAR_STOCKS: any[] = []
-
-export function computeHealthScore(): any {
+export function computeHealthScore() {
   return {}
 }
