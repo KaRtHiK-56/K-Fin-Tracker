@@ -1,4 +1,19 @@
-import type { StockHolding, LiveQuote } from '../types'
+import {
+  fetchLiveQuote,
+  fetchMultipleQuotes,
+  computePortfolioPnL,
+  computeHealthScore,
+  clearQuoteCache,
+  isMarketOpen,
+  buildStubQuote,
+  INDEX_TICKERS,
+  INDEX_GROUPS,
+  TIME_RANGES,
+  fetchPortfolioHistory,
+  fetchIndexHistory,
+  fetchIndexInvestedValue,
+  rebaseTo100
+} from '../../lib/stockApi'
 
 // ───────── TYPES ─────────
 export interface HistPoint {
