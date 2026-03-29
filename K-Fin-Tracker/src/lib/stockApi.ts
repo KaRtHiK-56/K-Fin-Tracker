@@ -1,10 +1,4 @@
-import type { StockHolding, LiveQuote } from '../types'
-
-// ───────── TYPES ─────────
-export interface HistPoint {
-  date: string
-  close: number
-}
+import type { StockHolding, LiveQuote, HistPoint } from '../types'
 
 // ───────── NORMALIZE ─────────
 function normalize(symbol: string) {
@@ -223,11 +217,11 @@ export const INDEX_GROUPS = [
 ]
 
 export const TIME_RANGES = [
-  { id: '1M', label: '1 Month', days: 30 },
-  { id: '3M', label: '3 Months', days: 90 },
-  { id: '6M', label: '6 Months', days: 180 },
-  { id: '1Y', label: '1 Year', days: 365 },
-  { id: '2Y', label: '2 Years', days: 730 }
+  { id: '1M', label: '1 Month', days: 30, period: '1mo', interval: '1d' },
+  { id: '3M', label: '3 Months', days: 90, period: '3mo', interval: '1d' },
+  { id: '6M', label: '6 Months', days: 180, period: '6mo', interval: '1d' },
+  { id: '1Y', label: '1 Year', days: 365, period: '1y', interval: '1d' },
+  { id: '2Y', label: '2 Years', days: 730, period: '2y', interval: '1d' }
 ]
 
 export async function fetchPortfolioHistory() {

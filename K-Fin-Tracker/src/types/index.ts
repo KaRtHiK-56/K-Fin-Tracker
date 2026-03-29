@@ -51,3 +51,8 @@ export interface HealthScore {
   top_holding_pct: number
   sector_count: number
 }
+
+export interface HistPoint {
+  date: string
+  close: number
+}

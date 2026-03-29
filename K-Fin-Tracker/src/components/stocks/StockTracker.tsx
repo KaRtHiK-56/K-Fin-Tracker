@@ -1207,6 +1207,15 @@ export default function StockTracker() {
               </div>
               {/* Donut on top, legend below — prevents overlap */}
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+                {sectorEntries.length === 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '40px 20px' }}>
+                    <div style={{ fontSize: 48, opacity: 0.3 }}>🥧</div>
+                    <div style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: 14 }}>
+                      Add stocks to see sector allocation
+                    </div>
+                  </div>
+                ) : (
+                  <>
                 <div style={{ position: 'relative', width: 180, height: 180, flexShrink: 0 }}>
                   <Doughnut
                     data={{
@@ -1266,6 +1275,8 @@ export default function StockTracker() {
                     )
                   })}
                 </div>
+                </>
+                )}
               </div>
             </div>
 
