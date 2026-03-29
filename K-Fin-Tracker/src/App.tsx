@@ -11,6 +11,22 @@ import LoginPage    from './pages/LoginPage'
 import Dashboard    from './pages/Dashboard'
 import StockTracker from './components/stocks/StockTracker'
 
+// App.tsx
+import { ErrorBoundary } from './components/ErrorBoundary'
+
+<Route
+  path="/stocks"
+  element={
+    <Protected>
+      <Layout theme={theme} onThemeToggle={toggle}>
+        <ErrorBoundary>
+          <StockTracker />
+        </ErrorBoundary>
+      </Layout>
+    </Protected>
+  }
+/>
+
 // ── Your allowed email ────────────────────────────────────────────────────────
 const ALLOWED_EMAIL = 'karthiksurya611@gmail.com'
 const NTFY_TOPIC    = 'kfin-karthik-9876'       // ← replace with your ntfy topic
