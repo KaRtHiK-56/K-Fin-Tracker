@@ -10,13 +10,15 @@ import {
   clearQuoteCache,
   isMarketOpen
 } from '../../lib/stockApi'
-import type { StockHolding, StockWithQuote, LiveQuote, SortField, SortDir } from '../../types'
-import { useTheme } from '../../lib/ThemeContext'
-import { usePortfolio } from '../../lib/portfolioStore'
-import ImportModal from './ImportModal'
-import styles from './StockTracker.module.css'
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler, ArcElement, Legend)
+// ADD THIS IMPORT
+import {
+  Chart as ChartJS, CategoryScale, LinearScale, PointElement,
+  LineElement, Tooltip, Filler, ArcElement, Legend, Title,  // ← ADD Title
+} from 'chart.js'
+
+// UPDATE REGISTRATION
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler, ArcElement, Legend, Title)
 
 /* ── Sector colours ─────────────────────────────────────────────────────────── */
 const SECTOR_COLORS: Record<string, string> = {
@@ -500,37 +502,56 @@ export default function StockTracker() {
     }
   }, [portfolioHistory, indexHistories, benchmarkIndices])
 
-  const lineOpts = (_yLabel: string) => ({
-    responsive: true, maintainAspectRatio: false,
-    scales: {
-      x: {
-        grid: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)' },
-        ticks: { color: isDark ? '#6B6486' : '#8875B5', font: { size: 10 }, maxTicksLimit: 10 },
-      },
-      y: {
-        grid: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)' },
-        ticks: {
-          color: isDark ? '#6B6486' : '#8875B5',
-          font: { size: 10 },
-          callback: (v: string | number) => fL(Number(v)),
-        },
+  import type { ChartOptions } from 'chart.js'
+
+const lineOpts = (_yLabel: string): ChartOptions<'line'> => ({
+  responsive: true, 
+  maintainAspectRatio: false,
+  scales: {
+    x: {
+      grid: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)' },
+      ticks: { 
+        color: isDark ? '#6B6486' : '#8875B5', 
+        font: { size: 10 }, 
+        maxTicksLimit: 10 
       },
     },
-    plugins: {
-      legend: {
-        display: true, position: 'top' as const,
-        labels: { color: isDark ? '#A89EC0' : '#4B3F72', font: { size: 11 }, boxWidth: 12, padding: 14 },
-      },
-      tooltip: {
-        callbacks: {
-          label: (ctx: { dataset: { label?: string }; raw: unknown }) =>
-            ` ${ctx.dataset.label}: ${fL(ctx.raw as number)}`,
-        },
-        mode: 'index' as const, intersect: false,
+    y: {
+      grid: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)' },
+      ticks: {
+        color: isDark ? '#6B6486' : '#8875B5',
+        font: { size: 10 },
+        callback: (value) => fL(Number(value)),
       },
     },
-    interaction: { mode: 'index' as const, intersect: false },
-  })
+  },
+  plugins: {
+    legend: {
+      display: true, 
+      position: 'top',
+      labels: { 
+        color: isDark ? '#A89EC0' : '#4B3F72', 
+        font: { size: 11 }, 
+        boxWidth: 12, 
+        padding: 14 
+      },
+    },
+    tooltip: {
+      callbacks: {
+        label: (context) => ` ${context.dataset.label}: ${fL(context.parsed.y)}`,
+      },
+      mode: 'index',
+      intersect: false,
+    },
+  },
+  interaction: { 
+    mode: 'index', 
+    intersect: false 
+  },
+})
+
+// Use without type cast:
+<Line data={pnlLineData} options={lineOpts('₹')} />
 
   /* ── Mini sparkline — draws prev_close→ltp arc when quote loaded ── */
   const sparkData = (h: StockWithQuote) => {
