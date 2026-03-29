@@ -21,7 +21,8 @@ import type {
   StockWithQuote, 
   SortField, 
   SortDir,
-  HealthScore 
+  HealthScore,
+  HistPoint 
 } from '../../types'
 import {
   fetchLiveQuote,
@@ -79,7 +80,7 @@ interface ChartOptions<T> {
       }
     }
     tooltip: {
-      mode: string
+      mode: 'index' | 'dataset' | 'point' | 'nearest'
       intersect: boolean
       callbacks: {
         label: (context: any) => string
@@ -758,12 +759,19 @@ export default function StockTracker() {
   const handleSearch = async (q: string) => {
     setSearchQ(q)
     setForm(f => ({ ...f, symbol: q.toUpperCase(), company_name: '' }))
-    if (q.length >= 2) { setSearchRes(await searchStocks(q)); setDropOpen(true) }
+    if (q.length >= 2) { 
+      const filtered = POPULAR_STOCKS.filter(s => 
+        s.symbol.toLowerCase().includes(q.toLowerCase()) || 
+        s.name.toLowerCase().includes(q.toLowerCase())
+      );
+      setSearchRes(filtered); 
+      setDropOpen(true) 
+    }
     else setDropOpen(false)
   }
 
   const pickStock = (s: typeof POPULAR_STOCKS[0]) => {
-    setForm(f => ({ ...f, symbol: s.symbol, company_name: s.company_name, exchange: s.exchange as 'NSE' | 'BSE' }))
+    setForm(f => ({ ...f, symbol: s.symbol, company_name: s.name, exchange: 'NSE' as 'NSE' | 'BSE' }))
     setSearchQ(s.symbol)
     setDropOpen(false)
   }

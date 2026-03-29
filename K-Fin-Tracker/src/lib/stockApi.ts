@@ -214,7 +214,12 @@ export const INDEX_TICKERS = {
 }
 
 export const INDEX_GROUPS = [
-  { id: 'indices', name: 'Indices', items: ['NIFTY50', 'SENSEX', 'BANKNIFTY'] }
+  { 
+    group: 'indices', 
+    name: 'Indices', 
+    ids: ['NIFTY50', 'SENSEX', 'BANKNIFTY'],
+    items: ['NIFTY50', 'SENSEX', 'BANKNIFTY']
+  }
 ]
 
 export const TIME_RANGES = [
