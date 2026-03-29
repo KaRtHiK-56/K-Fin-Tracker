@@ -14,6 +14,7 @@ import {
 } from 'chart.js'
 
 import { useTheme } from '../../lib/ThemeContext'   // ✅ MUST be here
+import { usePortfolio } from '../../lib/portfolioStore'   // ✅ MUST be here
 
 // UPDATE REGISTRATION
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler, ArcElement, Legend, Title)
