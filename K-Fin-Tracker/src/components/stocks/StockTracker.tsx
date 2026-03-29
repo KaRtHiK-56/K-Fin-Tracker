@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Line, Doughnut } from 'react-chartjs-2'
 import {
   Chart as ChartJS,
@@ -15,6 +15,28 @@ import {
 
 import { useTheme } from '../../lib/ThemeContext'   // ✅ MUST be here
 import { usePortfolio } from '../../lib/portfolioStore'   // ✅ MUST be here
+import type { 
+  StockHolding, 
+  LiveQuote, 
+  StockWithQuote, 
+  SortField, 
+  SortDir,
+  HealthScore 
+} from '../../types'
+import {
+  fetchLiveQuote,
+  fetchMultipleQuotes,
+  computePortfolioPnL,
+  clearQuoteCache,
+  isMarketOpen,
+  buildStubQuote,
+  fetchPortfolioHistory,
+  fetchIndexHistory,
+  INDEX_TICKERS,
+  TIME_RANGES,
+  INDEX_GROUPS
+} from '../../lib/stockApi'
+import styles from './StockTracker.module.css'
 
 // UPDATE REGISTRATION
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler, ArcElement, Legend, Title)
@@ -27,6 +49,114 @@ const SECTOR_COLORS: Record<string, string> = {
   FMCG: '#A78BFA', Infrastructure: '#34D399', Other: '#94A3B8',
 }
 const SECTORS = ['IT','Banking','Energy','Consumer','NBFC','Pharma','Auto','Travel','Cement','FMCG','Infrastructure','Other']
+
+// ── Popular Stocks for Search ─────────────────────────────────────────────────────
+const POPULAR_STOCKS = [
+  { symbol: 'RELIANCE', name: 'Reliance Industries Ltd', sector: 'Energy' },
+  { symbol: 'TCS', name: 'Tata Consultancy Services', sector: 'IT' },
+  { symbol: 'HDFCBANK', name: 'HDFC Bank Ltd', sector: 'Banking' },
+  { symbol: 'INFOSYS', name: 'Infosys Ltd', sector: 'IT' },
+  { symbol: 'ICICIBANK', name: 'ICICI Bank Ltd', sector: 'Banking' },
+  { symbol: 'HINDUNILVR', name: 'Hindustan Unilever Ltd', sector: 'FMCG' },
+  { symbol: 'SBIN', name: 'State Bank of India', sector: 'Banking' },
+  { symbol: 'KOTAKBANK', name: 'Kotak Mahindra Bank Ltd', sector: 'Banking' },
+  { symbol: 'BHARTIARTL', name: 'Bharti Airtel Ltd', sector: 'Telecom' },
+  { symbol: 'ITC', name: 'ITC Ltd', sector: 'FMCG' },
+]
+
+// ── Chart Options Interface ───────────────────────────────────────────────────────
+interface ChartOptions<T> {
+  responsive: boolean
+  maintainAspectRatio: boolean
+  plugins: {
+    legend: {
+      display: boolean
+      labels: {
+        color: string
+        font: {
+          size: number
+        }
+      }
+    }
+    tooltip: {
+      mode: string
+      intersect: boolean
+      callbacks: {
+        label: (context: any) => string
+      }
+    }
+  }
+  scales?: {
+    x: {
+      grid: {
+        display: boolean
+        color: string
+      }
+      ticks: {
+        color: string
+        font: {
+          size: number
+        }
+      }
+    }
+    y: {
+      grid: {
+        display: boolean
+        color: string
+      }
+      ticks: {
+        color: string
+        font: {
+          size: number
+        }
+      }
+    }
+  }
+}
+
+// ── Import Modal Component (Stub) ───────────────────────────────────────────────────
+interface ImportModalProps {
+  onClose: () => void
+  onImport: (data: any) => void
+}
+
+function ImportModal({ onClose, onImport }: ImportModalProps) {
+  return (
+    <div style={{
+      position: 'fixed',
+      inset: 0,
+      background: 'rgba(0,0,0,0.5)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 1000
+    }}>
+      <div style={{
+        background: 'var(--bg-primary)',
+        borderRadius: 12,
+        padding: 24,
+        maxWidth: 400,
+        width: '90%'
+      }}>
+        <h3 style={{ margin: '0 0 16px 0', color: 'var(--text-primary)' }}>Import Stocks</h3>
+        <p style={{ margin: '0 0 20px 0', color: 'var(--text-secondary)' }}>Import functionality coming soon...</p>
+        <button
+          onClick={onClose}
+          style={{
+            padding: '8px 16px',
+            background: 'var(--brand)',
+            color: 'white',
+            border: 'none',
+            borderRadius: 6,
+            cursor: 'pointer'
+          }}
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  )
+}
 
 
 /* ── Health score tooltip content ──────────────────────────────────────────── */
