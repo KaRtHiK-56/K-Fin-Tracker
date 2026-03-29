@@ -11,6 +11,8 @@ import {
   isMarketOpen
 } from '../../lib/stockApi'
 
+import type { ChartOptions } from 'chart.js'
+
 // ADD THIS IMPORT
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement,
@@ -501,8 +503,6 @@ export default function StockTracker() {
       beatingPrimary:     myRet > primRet,
     }
   }, [portfolioHistory, indexHistories, benchmarkIndices])
-
-  import { ChartOptions } from 'chart.js'
 
   const lineOpts = (_yLabel: string): ChartOptions<'line'> => ({
     responsive: true, 
