@@ -74,34 +74,45 @@ export async function fetchLiveQuote(
   }
 
   try {
-    const res = await fetch(`/api/quote?symbol=${encodeURIComponent(ticker)}`)
-    const json = await res.json()
-
-    const data = json.data ?? json
-    const price = getPrice(data)
-
-    if (!price || price <= 0) return cached?.data ?? null
+    // Use external stock API instead of local /api/quote endpoint
+    const apiUrl = `https://military-jobye-haiqstudios-14f59639.koyeb.app/stock?symbol=${ticker}`
+    const res = await fetch(apiUrl)
+    
+    if (!res.ok) {
+      throw new Error(`API request failed: ${res.status}`)
+    }
+    
+    const data = await res.json()
+    
+    if (!data || !data.ltp) {
+      throw new Error('Invalid quote data received')
+    }
 
     const quote: LiveQuote = {
       symbol: clean,
-      company_name: data.longName || clean,
+      company_name: data.company_name || clean,
       exchange,
-      ltp: price,
-      open: price,
-      high: price,
-      low: price,
-      prev_close: price,
-      change: 0,
-      change_pct: 0,
-      volume: 0,
-      last_updated: new Date().toISOString()
+      ltp: Number(data.ltp) || 0,
+      open: Number(data.open) || 0,
+      high: Number(data.high) || 0,
+      low: Number(data.low) || 0,
+      prev_close: Number(data.prev_close) || 0,
+      change: Number(data.change) || 0,
+      change_pct: Number(data.change_pct) || 0,
+      volume: Number(data.volume) || 0,
+      last_updated: data.last_updated || new Date().toISOString()
     }
 
     quoteCache.set(clean, { data: quote, ts: Date.now() })
-
     return quote
-  } catch {
-    return cached?.data ?? null
+
+  } catch (error) {
+    console.warn(`[kfin] Failed to fetch quote for ${ticker}:`, error)
+    
+    // Return stub quote during API failures
+    const stubQuote = buildStubQuote(clean, exchange)
+    quoteCache.set(clean, { data: stubQuote, ts: Date.now() })
+    return stubQuote
   }
 }
 
