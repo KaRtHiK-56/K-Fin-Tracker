@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import type { User } from '@supabase/supabase-js'
-import { ThemeProvider } from './lib/ThemeContext'
+import { ThemeProvider, useTheme } from './lib/ThemeContext'
 import PortfolioProvider from './lib/PortfolioProvider'
 import { supabase } from './lib/supabase'
 import './styles/globals.css'
@@ -114,7 +114,7 @@ function AppInner() {
           path="/dashboard"
           element={
             <Protected>
-              <Layout theme={theme} onThemeToggle={toggle}>
+              <Layout>
                 <Dashboard />
               </Layout>
             </Protected>
@@ -124,7 +124,7 @@ function AppInner() {
           path="/stocks"
           element={
             <Protected>
-              <Layout theme={theme} onThemeToggle={toggle}>
+              <Layout>
                 <StockTracker />
               </Layout>
             </Protected>
