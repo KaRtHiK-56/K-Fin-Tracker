@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { signOut } from '../../lib/supabase'
-import { useTheme } from '../../lib/ThemeContext'
+import { useTheme } from '../lib/ThemeContext'
 
 interface Props {
   children: React.ReactNode
