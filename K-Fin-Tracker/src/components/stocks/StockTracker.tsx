@@ -502,13 +502,13 @@ export default function StockTracker() {
     }
   }, [portfolioHistory, indexHistories, benchmarkIndices])
 
-  import type { ChartOptions } from 'chart.js'
+  import { ChartOptions } from 'chart.js'
 
-const lineOpts = (_yLabel: string): ChartOptions<'line'> => ({
-  responsive: true, 
-  maintainAspectRatio: false,
-  scales: {
-    x: {
+  const lineOpts = (_yLabel: string): ChartOptions<'line'> => ({
+    responsive: true, 
+    maintainAspectRatio: false,
+    scales: {
+      x: {
       grid: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)' },
       ticks: { 
         color: isDark ? '#6B6486' : '#8875B5', 
@@ -516,7 +516,7 @@ const lineOpts = (_yLabel: string): ChartOptions<'line'> => ({
         maxTicksLimit: 10 
       },
     },
-    y: {
+      y: {
       grid: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)' },
       ticks: {
         color: isDark ? '#6B6486' : '#8875B5',
@@ -525,33 +525,34 @@ const lineOpts = (_yLabel: string): ChartOptions<'line'> => ({
       },
     },
   },
-  plugins: {
-    legend: {
-      display: true, 
-      position: 'top',
-      labels: { 
+    plugins: {
+      legend: {
+        display: true, 
+        position: 'top',
+        labels: { 
         color: isDark ? '#A89EC0' : '#4B3F72', 
         font: { size: 11 }, 
         boxWidth: 12, 
         padding: 14 
+        },
       },
-    },
-    tooltip: {
-      callbacks: {
-        label: (context) => ` ${context.dataset.label}: ${fL(context.parsed.y)}`,
-      },
-      mode: 'index',
-      intersect: false,
+      tooltip: {
+        callbacks: {
+          label: (context) => ` ${context.dataset.label}: ${fL(context.parsed.y)}`,
+        },
+        mode: 'index',
+        intersect: false,
     },
   },
-  interaction: { 
-    mode: 'index', 
-    intersect: false 
+    interaction: { 
+      mode: 'index', 
+      intersect: false 
   },
 })
 
 // Use without type cast:
 <Line data={pnlLineData} options={lineOpts('₹')} />
+
 
   /* ── Mini sparkline — draws prev_close→ltp arc when quote loaded ── */
   const sparkData = (h: StockWithQuote) => {
