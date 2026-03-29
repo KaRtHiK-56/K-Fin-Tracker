@@ -29,7 +29,7 @@ export default function Layout({ children, theme, onThemeToggle }: Props) {
   const navigate  = useNavigate()
   const location  = useLocation()
   const [col, setCol] = useState(false)
-  const isDark = theme === 'dark'
+  const { isDark } = useTheme()
 
   const handleSignOut = async () => {
     await signOut()
