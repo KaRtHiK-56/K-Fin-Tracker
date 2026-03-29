@@ -37,11 +37,12 @@ export function usePortfolio() {
 const HOLDINGS_KEY = 'kfin_holdings'
 const SNAPSHOT_KEY = 'kfin_snapshot'
 
+// portfolioStore.ts
 export function loadHoldingsFromStorage(): StockHolding[] {
   try {
     const raw = localStorage.getItem(HOLDINGS_KEY)
     return raw ? JSON.parse(raw) : []
-  } catch { return [] }
+  } catch { return [] }  // ← This catches parse errors, BUT...
 }
 
 export function saveHoldingsToStorage(h: StockHolding[]) {
