@@ -1,21 +1,19 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Line, Doughnut } from 'react-chartjs-2'
 import {
-  fetchLiveQuote,
-  computePortfolioPnL,
-  clearQuoteCache,
-  isMarketOpen
-} from '../../lib/stockApi'
-
-import type { ChartOptions } from 'chart.js'
-
-import { useTheme } from '../../lib/ThemeContext'
-
-// ADD THIS IMPORT
-import {
-  Chart as ChartJS, CategoryScale, LinearScale, PointElement,
-  LineElement, Tooltip, Filler, ArcElement, Legend, Title,  // ← ADD Title
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Tooltip,
+  Filler,
+  ArcElement,
+  Legend,
+  Title,
 } from 'chart.js'
+
+import { useTheme } from '../../lib/ThemeContext'   // ✅ MUST be here
 
 // UPDATE REGISTRATION
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler, ArcElement, Legend, Title)
