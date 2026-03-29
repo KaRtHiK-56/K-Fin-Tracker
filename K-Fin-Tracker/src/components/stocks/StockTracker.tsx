@@ -209,7 +209,7 @@ export default function StockTracker() {
           benchmarkIndices.map(async (id) => {
             try {
               // Always fetch max history — ensures we cover all buy dates
-              const idxHistory = await fetchIndexHistory(id, 'max', '1wk')
+              const idxHistory = await fetchIndexHistory(id)
               if (!idxHistory.length) return
 
               // For each stock holding: compute how many index units you'd buy
