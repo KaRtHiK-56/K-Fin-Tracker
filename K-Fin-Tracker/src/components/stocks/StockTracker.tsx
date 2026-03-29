@@ -548,12 +548,13 @@ export default function StockTracker() {
       mode: 'index', 
       intersect: false 
   },
-})
-
-// Use without type cast:
-<Line data={pnlLineData} options={lineOpts('₹')} />
-
-
+});
+  return (
+  <div>
+    <Line data={pnlLineData} options={lineOpts('₹')} />
+  </div>
+);
+  
   /* ── Mini sparkline — draws prev_close→ltp arc when quote loaded ── */
   const sparkData = (h: StockWithQuote) => {
     const q      = h.quote
