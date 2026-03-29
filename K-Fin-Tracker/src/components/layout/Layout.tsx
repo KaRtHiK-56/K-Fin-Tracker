@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { signOut } from '../../lib/supabase'
 import type { Theme } from '../../types'
+import { useTheme } from '../../lib/ThemeContext'
 
 interface Props { children: React.ReactNode; theme: Theme; onThemeToggle: () => void }
 
@@ -25,11 +26,11 @@ const NAV = [
   ]},
 ]
 
-export default function Layout({ children, theme, onThemeToggle }: Props) {
+export default function Layout({ children }: { children: React.ReactNode }) {
+  const { isDark, toggle } = useTheme()
   const navigate  = useNavigate()
   const location  = useLocation()
   const [col, setCol] = useState(false)
-  const { isDark } = useTheme()
 
   const handleSignOut = async () => {
     await signOut()
