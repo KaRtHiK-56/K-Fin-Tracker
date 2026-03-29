@@ -4,7 +4,9 @@ import { signOut } from '../../lib/supabase'
 import type { Theme } from '../../types'
 import { useTheme } from '../../lib/ThemeContext'
 
-interface Props { children: React.ReactNode; theme: Theme; onThemeToggle: () => void }
+interface Props { 
+  children: React.ReactNode 
+}
 
 const NAV = [
   { section: 'Overview',     items: [
@@ -120,18 +122,32 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         {/* Footer */}
         <div style={{ padding: '10px 8px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 4 }}>
           {[
-            { icon: isDark ? '☀️' : '🌙', label: isDark ? 'Light Mode' : 'Dark Mode', fn: onThemeToggle },
-            { icon: '🚪', label: 'Sign Out', fn: handleSignOut },
-          ].map(({ icon, label, fn }) => (
-            <button key={label} onClick={fn} title={col ? label : undefined} style={{
-              display: 'flex', alignItems: 'center', gap: 9,
-              padding: col ? '10px 0' : '9px 10px',
-              justifyContent: col ? 'center' : 'flex-start',
-              width: '100%', border: '1px solid transparent',
-              borderRadius: 10, background: 'transparent', cursor: 'pointer',
-              color: 'var(--text-tertiary)', fontSize: 13.5,
-              fontFamily: 'var(--font)', transition: 'var(--trans)',
-            }}
+  { icon: isDark ? '☀️' : '🌙', label: isDark ? 'Light Mode' : 'Dark Mode', fn: toggle },
+  { icon: '🚪', label: 'Sign Out', fn: handleSignOut },
+].map(({ icon, label, fn }) => (
+  <button
+    key={label}
+    onClick={fn}
+    title={col ? label : undefined}
+    style={{
+      display: 'flex', alignItems: 'center', gap: 9,
+      padding: col ? '10px 0' : '9px 10px',
+      justifyContent: col ? 'center' : 'flex-start',
+      width: '100%',
+      border: '1px solid transparent',
+      borderRadius: 10,
+      background: 'transparent',
+      cursor: 'pointer',
+      color: 'var(--text-tertiary)',
+      fontSize: 13.5,
+      fontFamily: 'var(--font)',
+      transition: 'var(--trans)',
+    }}
+  >
+    <span style={{ fontSize: 16 }}>{icon}</span>
+    {!col && <span>{label}</span>}
+  </button>
+))}
               onMouseOver={e => {
                 const el = e.currentTarget as HTMLButtonElement
                 el.style.background = 'var(--bg-tertiary)'
