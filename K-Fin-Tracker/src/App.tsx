@@ -18,7 +18,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
   path="/stocks"
   element={
     <Protected>
-      <Layout theme={theme} onThemeToggle={toggle}>
+      <Layout>
         <ErrorBoundary>
           <StockTracker />
         </ErrorBoundary>
