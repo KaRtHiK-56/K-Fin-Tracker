@@ -1,10 +1,4 @@
-import {
-  fetchLiveQuote,
-  fetchMultipleQuotes,
-  computePortfolioPnL,
-  clearQuoteCache,
-  isMarketOpen
-} from '../../lib/stockApi'
+import type { StockHolding, LiveQuote } from '../types'
 
 // ───────── TYPES ─────────
 export interface HistPoint {
@@ -163,9 +157,23 @@ export function computePortfolioPnL(
 }
 
 // ───────── DUMMY EXPORTS (TO PREVENT FUTURE CRASHES) ─────────
-export const INDEX_TICKERS = {}
-export const INDEX_GROUPS = {}
-export const TIME_RANGES = {}
+export const INDEX_TICKERS = {
+  'NIFTY50': { symbol: '^NSEI', name: 'Nifty 50' },
+  'SENSEX': { symbol: '^BSESN', name: 'Sensex' },
+  'BANKNIFTY': { symbol: '^NSEBANK', name: 'Nifty Bank' }
+}
+
+export const INDEX_GROUPS = [
+  { id: 'indices', name: 'Indices', items: ['NIFTY50', 'SENSEX', 'BANKNIFTY'] }
+]
+
+export const TIME_RANGES = [
+  { id: '1M', label: '1 Month', days: 30 },
+  { id: '3M', label: '3 Months', days: 90 },
+  { id: '6M', label: '6 Months', days: 180 },
+  { id: '1Y', label: '1 Year', days: 365 },
+  { id: '2Y', label: '2 Years', days: 730 }
+]
 
 export async function fetchPortfolioHistory() {
   return []

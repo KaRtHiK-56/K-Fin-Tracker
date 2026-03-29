@@ -196,6 +196,37 @@ const fL = (n: number) => {
 /* ══════════════════════════════════════════════════════════════════════════════
    MAIN COMPONENT
 ══════════════════════════════════════════════════════════════════════════════ */
+
+// Simple health calculation (temporary replacement for missing health function)
+const calculateHealth = (holdings: StockHolding[]) => {
+  const sectorCount = new Set(holdings.map(h => h.sector)).size
+  const totalValue = holdings.reduce((sum, h) => sum + (h.quantity * 1000), 0) // Simplified calculation
+  const topHolding = holdings.reduce((max, h) => {
+    const value = h.quantity * 1000
+    return value > max.value ? { symbol: h.symbol, value } : max
+  }, { symbol: '', value: 0 })
+  
+  const topHoldingPct = totalValue > 0 ? (topHolding.value / totalValue) * 100 : 0
+  const overall = Math.min(100, Math.max(0, 
+    (sectorCount * 8) + 
+    (Math.max(0, 30 - (topHoldingPct * 0.5))) + 
+    (Math.min(holdings.length * 2, 20)) + 
+    10 // Simplified green positions
+  ))
+  
+  let risk_level: 'Low' | 'Moderate' | 'High' | 'Very High' = 'Low'
+  if (overall < 40) risk_level = 'Very High'
+  else if (overall < 60) risk_level = 'High'
+  else if (overall < 80) risk_level = 'Moderate'
+  
+  return {
+    overall,
+    risk_level,
+    sector_count: sectorCount,
+    top_holding_pct: topHoldingPct
+  }
+}
+
 export default function StockTracker() {
   const { isDark } = useTheme()
   // ── Global portfolio store — persists to localStorage, shared with Dashboard
@@ -224,6 +255,9 @@ export default function StockTracker() {
   const [histError,        setHistError]        = useState<string | null>(null)
   const [quoteError,       setQuoteError]       = useState<string | null>(null)
   const healthRef = useRef<HTMLDivElement>(null)
+
+  // Calculate health score
+  const health = calculateHealth(holdings)
 
   /* ── Close health tooltip on outside click ── */
   useEffect(() => {
@@ -1494,8 +1528,8 @@ export default function StockTracker() {
                         onMouseOut={e => (e.currentTarget as HTMLDivElement).style.background = 'transparent'}
                       >
                         <span style={{ fontFamily: 'var(--mono)', fontSize: 11.5, fontWeight: 600, background: 'var(--bg-tertiary)', color: 'var(--brand)', padding: '1px 6px', borderRadius: 5 }}>{r.symbol}</span>
-                        <span style={{ flex: 1, color: 'var(--text-secondary)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company_name}</span>
-                        <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{r.exchange}</span>
+                        <span style={{ flex: 1, color: 'var(--text-secondary)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{r.sector}</span>
                       </div>
                     ))}
                   </div>
