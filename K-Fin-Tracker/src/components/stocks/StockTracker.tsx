@@ -318,7 +318,7 @@ export default function StockTracker() {
       holdings.forEach(h => {
         if (!next.has(h.symbol)) {
           next.set(h.symbol, buildStubQuote(
-            h.symbol, h.exchange, h.avg_buy_price, h.company_name
+            h.symbol, h.exchange
           ))
         }
       })
@@ -359,7 +359,7 @@ export default function StockTracker() {
     ;(async () => {
       try {
         // ── Portfolio history: actual daily value ──────────────────────────
-        const portHist = await fetchPortfolioHistory(holdings, period, interval)
+        const portHist = await fetchPortfolioHistory()
         setPortfolioHistory(portHist)
 
         // ── Index history: per-purchase simulation ────────────────────────
@@ -373,7 +373,7 @@ export default function StockTracker() {
           benchmarkIndices.map(async (id) => {
             try {
               // Always fetch max history — ensures we cover all buy dates
-              const idxHistory = await fetchIndexHistory(id)
+              const idxHistory = await fetchIndexHistory()
               if (!idxHistory.length) return
 
               // For each stock holding: compute how many index units you'd buy
