@@ -13,6 +13,8 @@ import {
 
 import type { ChartOptions } from 'chart.js'
 
+import { ThemeProvider } from './lib/ThemeContext'
+
 // ADD THIS IMPORT
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement,
