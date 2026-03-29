@@ -1,10 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Line, Doughnut } from 'react-chartjs-2'
 import {
-  Chart as ChartJS, CategoryScale, LinearScale, PointElement,
-  LineElement, Tooltip, Filler, ArcElement, Legend,
-} from 'chart.js'
-import {
   fetchLiveQuote,
   computePortfolioPnL,
   clearQuoteCache,
@@ -13,7 +9,7 @@ import {
 
 import type { ChartOptions } from 'chart.js'
 
-import { ThemeProvider } from './lib/ThemeContext'
+import { useTheme } from '../../lib/ThemeContext'
 
 // ADD THIS IMPORT
 import {
